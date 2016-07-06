@@ -27,13 +27,16 @@ event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
 
 event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
-    reg_t rdi, rax;
+    reg_t rdi, rax, cr3;
     vmi_get_vcpureg(vmi, &rax, RAX, event->vcpu_id);
     vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
 
-    if (event->mem_event.gla == lstar)
-        printf("Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", (unsigned int)rax, (unsigned int)rdi);
+    vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
+    if (event->mem_event.gla == lstar) {
+        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        printf("Process [%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
+    }
 
     vmi_clear_event(vmi, event, NULL);
     vmi_register_event(vmi, &single_event);
