@@ -17,11 +17,18 @@ vmi_event_t single_event;
 reg_t lstar;
 addr_t phys_lstar;
 
+uint32_t orig_data;
 vmi_pid_t pid = -1;
+
 
 event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
-    vmi_register_event(vmi, &syscall_sysenter_event);
+    syscall_sysenter_event.interrupt_event.reinject = 1;
+    if (set_breakpoint(vmi, lstar, 0) < 0) {
+        fprintf(stderr, "Could not set break points\n");
+        exit(1);
+    }
+    
     vmi_clear_event(vmi, &single_event, NULL);
     return 0;
 }
@@ -33,13 +40,33 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
     vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
     vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
-    if (event->mem_event.gla == lstar) {
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+    if (event->interrupt_event.gla == lstar) {
+        pid = vmi_dtb_to_pid(vmi, cr3);
         printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
     }
 
-    vmi_clear_event(vmi, event, NULL);
+    event->interrupt_event.reinject = 0;
+    if (VMI_FAILURE == vmi_write_32_va(vmi, lstar, 0, &orig_data)) {
+        fprintf(stderr, "failed to write memory.\n");
+        exit(1);
+    }
+
     vmi_register_event(vmi, &single_event);
+    return 0;
+}
+
+int set_breakpoint(vmi_instance_t vmi, addr_t addr, pid_t pid) {
+
+    uint32_t data;
+    if (VMI_FAILURE == vmi_read_32_va(vmi, addr, pid, &data)) {
+        printf("failed to read memory.\n");
+        return -1;
+    }
+    data = (data & 0xFFFFFF00) | 0xCC;
+    if (VMI_FAILURE == vmi_write_32_va(vmi, addr, pid, &data)) {
+        printf("failed to write memory.\n");
+        return -1;
+    }
     return 0;
 }
 
@@ -78,14 +105,12 @@ int main (int argc, char **argv) {
 
 
     vmi_get_vcpureg(vmi, &lstar, MSR_LSTAR, 0);
+
     phys_lstar = vmi_translate_kv2p(vmi,lstar);
 
     memset(&syscall_sysenter_event, 0, sizeof(vmi_event_t));
-    syscall_sysenter_event.type = VMI_EVENT_MEMORY;
-    syscall_sysenter_event.mem_event.physical_address = phys_lstar;
-    syscall_sysenter_event.mem_event.npages = 1;
-    syscall_sysenter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    syscall_sysenter_event.mem_event.in_access = VMI_MEMACCESS_X;
+    syscall_sysenter_event.type = VMI_EVENT_INTERRUPT;
+    syscall_sysenter_event.interrupt_event.intr = INT3;
     syscall_sysenter_event.callback = syscall_sysenter_cb;
 
     memset(&single_event, 0, sizeof(vmi_event_t));
@@ -94,11 +119,20 @@ int main (int argc, char **argv) {
     single_event.ss_event.enable = 1;
     SET_VCPU_SINGLESTEP(single_event.ss_event, 0);
 
+    if (VMI_FAILURE == vmi_read_32_va(vmi, lstar, 0, &orig_data)) {
+        printf("failed to read memory.\n");
+        return -1;
+    }
+
     if(vmi_register_event(vmi, &syscall_sysenter_event) == VMI_FAILURE) {
         fprintf(stderr, "Could not install sysenter syscall handler.\n");
         goto leave;
     }
 
+    if (set_breakpoint(vmi, lstar, 0) < 0) {
+        fprintf(stderr, "Could not set break points\n");
+        goto leave;
+    }
 
     status_t status;
     while(!interrupted){
@@ -111,8 +145,12 @@ int main (int argc, char **argv) {
     printf("Finished with test.\n");
 
 leave:
+    if (VMI_FAILURE == vmi_write_32_va(vmi, lstar, 0, &orig_data)) {
+        fprintf(stderr, "failed to write memory.\n");
+        exit(1);
+    }
+
     vmi_destroy(vmi);
 
     return 0;
-
 }
