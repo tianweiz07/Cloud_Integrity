@@ -35,7 +35,13 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
 
     if (event->mem_event.gla == lstar) {
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
-        printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
+        if (rax == 90 ) {
+            char *argname = NULL;
+            argname = vmi_read_str_va(vmi, rdi, pid);
+            printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%s\n", pid, (unsigned int)rax, argname);
+        }
+        else
+            printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
     }
 
     vmi_clear_event(vmi, event, NULL);

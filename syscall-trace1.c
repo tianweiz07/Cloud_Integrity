@@ -42,7 +42,16 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
 
     if (event->interrupt_event.gla == lstar) {
         pid = vmi_dtb_to_pid(vmi, cr3);
-        printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
+        /* Here is the problem: it is hard for you to know whether the parameter is 
+           an int, a pointer to a string, or any other types. 
+           how to distinguish the types of first parameter? */
+        if (rax == 90 ) {
+            char *argname = NULL;
+            argname = vmi_read_str_va(vmi, rdi, pid);
+            printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%s\n", pid, (unsigned int)rax, argname);
+        }
+        else
+            printf("Process[%d]: Syscall happened: RAX(syscall#)=%u RDI(1st argument)=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
     }
 
     event->interrupt_event.reinject = 0;
@@ -121,6 +130,7 @@ int main (int argc, char **argv) {
 
     if (VMI_FAILURE == vmi_read_32_va(vmi, lstar, 0, &orig_data)) {
         printf("failed to read memory.\n");
+        vmi_destroy(vmi);
         return -1;
     }
 

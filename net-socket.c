@@ -11,8 +11,7 @@
 
 static int interrupted = 0;
 
-addr_t sys_call_table_addr, sys_socket_addr;
-int sys_socket = 41;
+addr_t sys_socket_addr;
 
 vmi_event_t syscall_sysenter_event;
 vmi_event_t single_event;
@@ -105,9 +104,8 @@ int main (int argc, char **argv) {
         printf("LibVMI init succeeded!\n");
 
 
-    sys_call_table_addr = vmi_translate_ksym2v(vmi, "sys_call_table");
-    vmi_read_addr_va(vmi, sys_call_table_addr+sys_socket*8, 0, &sys_socket_addr);
-    printf("sys_call_table[%d] address is 0x%x\n", sys_socket, (unsigned int)sys_socket_addr);
+    sys_socket_addr = vmi_translate_ksym2v(vmi, "sys_socket");
+    printf("sys_socket address is 0x%x\n", (unsigned int)sys_socket_addr);
 
     memset(&syscall_sysenter_event, 0, sizeof(vmi_event_t));
     syscall_sysenter_event.type = VMI_EVENT_INTERRUPT;
@@ -122,6 +120,7 @@ int main (int argc, char **argv) {
 
     if (VMI_FAILURE == vmi_read_32_va(vmi, sys_socket_addr, 0, &orig_data)) {
         printf("failed to read memory.\n");
+        vmi_destroy(vmi);
         return -1;
     }
 

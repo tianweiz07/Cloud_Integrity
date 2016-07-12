@@ -11,7 +11,7 @@
 
 static int interrupted = 0;
 
-addr_t register_chrdev_addr;
+addr_t sys_execve_addr;
 
 vmi_event_t syscall_sysenter_event;
 vmi_event_t single_event;
@@ -19,10 +19,11 @@ vmi_event_t single_event;
 uint32_t orig_data;
 vmi_pid_t pid = -1;
 
+
 event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
     syscall_sysenter_event.interrupt_event.reinject = 1;
-    if (set_breakpoint(vmi, register_chrdev_addr, 0) < 0) {
+    if (set_breakpoint(vmi, sys_execve_addr, 0) < 0) {
         fprintf(stderr, "Could not set break points\n");
         exit(1);
     }
@@ -33,20 +34,20 @@ event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
 
 event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
-    reg_t rdi, rsi, rcx, cr3;
+    reg_t rdi, rax, cr3;
+    char *argname = NULL;
+    vmi_get_vcpureg(vmi, &rax, RAX, event->vcpu_id);
     vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
-    vmi_get_vcpureg(vmi, &rsi, RSI, event->vcpu_id);
-    vmi_get_vcpureg(vmi, &rcx, RCX, event->vcpu_id);
     vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-    if (event->interrupt_event.gla == register_chrdev_addr) {
+
+    argname = vmi_read_str_va(vmi, (addr_t)rdi, 0);
+    if (event->interrupt_event.gla == sys_execve_addr) {
         pid = vmi_dtb_to_pid(vmi, cr3);
-        char *argname = NULL;
-        argname = vmi_read_str_va(vmi, rcx, 0);
-        printf("Process [%d] register a Character Device: name = %s\n", pid, argname);
+        printf("Process[%d] invokes sys_execve: %d %s\n", pid, (unsigned int)rax, argname);
     }
 
     event->interrupt_event.reinject = 0;
-    if (VMI_FAILURE == vmi_write_32_va(vmi, register_chrdev_addr, 0, &orig_data)) {
+    if (VMI_FAILURE == vmi_write_32_va(vmi, sys_execve_addr, 0, &orig_data)) {
         fprintf(stderr, "failed to write memory.\n");
         exit(1);
     }
@@ -105,8 +106,8 @@ int main (int argc, char **argv) {
         printf("LibVMI init succeeded!\n");
 
 
-    register_chrdev_addr = vmi_translate_ksym2v(vmi, "__register_chrdev");
-    printf("__register_chrdev address is 0x%x\n", (unsigned int)register_chrdev_addr);
+    sys_execve_addr = vmi_translate_ksym2v(vmi, "sys_execve");
+    printf("sys_execve address is 0x%x\n", (unsigned int)sys_execve_addr);
 
     memset(&syscall_sysenter_event, 0, sizeof(vmi_event_t));
     syscall_sysenter_event.type = VMI_EVENT_INTERRUPT;
@@ -119,7 +120,7 @@ int main (int argc, char **argv) {
     single_event.ss_event.enable = 1;
     SET_VCPU_SINGLESTEP(single_event.ss_event, 0);
 
-    if (VMI_FAILURE == vmi_read_32_va(vmi, register_chrdev_addr, 0, &orig_data)) {
+    if (VMI_FAILURE == vmi_read_32_va(vmi, sys_execve_addr, 0, &orig_data)) {
         printf("failed to read memory.\n");
         vmi_destroy(vmi);
         return -1;
@@ -130,7 +131,7 @@ int main (int argc, char **argv) {
         goto leave;
     }
 
-    if (set_breakpoint(vmi, register_chrdev_addr, 0) < 0) {
+    if (set_breakpoint(vmi, sys_execve_addr, 0) < 0) {
         fprintf(stderr, "Could not set break points\n");
         goto leave;
     }
@@ -146,7 +147,7 @@ int main (int argc, char **argv) {
     printf("Finished with test.\n");
 
 leave:
-    if (VMI_FAILURE == vmi_write_32_va(vmi, register_chrdev_addr, 0, &orig_data)) {
+    if (VMI_FAILURE == vmi_write_32_va(vmi, sys_execve_addr, 0, &orig_data)) {
         fprintf(stderr, "failed to write memory.\n");
         exit(1);
     }
