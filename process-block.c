@@ -35,14 +35,14 @@ event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
 event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
     reg_t rdi, rax, cr3;
-    char *argname = NULL;
     vmi_get_vcpureg(vmi, &rax, RAX, event->vcpu_id);
     vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
     vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
-    argname = vmi_read_str_va(vmi, (addr_t)rdi, 0);
     if (event->interrupt_event.gla == sys_execve_addr) {
+        char *argname = NULL;
         pid = vmi_dtb_to_pid(vmi, cr3);
+        argname = vmi_read_str_va(vmi, (addr_t)rdi, pid);
         printf("Process[%d] invokes sys_execve: %d %s\n", pid, (unsigned int)rax, argname);
     }
 
