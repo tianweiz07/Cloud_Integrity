@@ -19,6 +19,19 @@ vmi_event_t single_event;
 uint32_t orig_data;
 vmi_pid_t pid = -1;
 
+unsigned long tasks_offset = 0, pid_offset = 0, name_offset = 0;
+addr_t list_head = 0, next_list_entry = 0;
+addr_t current_process = 0;
+char *procname = NULL;
+vmi_pid_t pid1 = 0;
+
+
+unsigned long fs_offset = 0x530;
+unsigned long dentry_offset = 0x28;
+unsigned long parent_offset = 0x28;
+unsigned long iname_offset = 0xa0;
+
+char *pathname = NULL;
 
 event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
@@ -40,12 +53,82 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
     vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
     if (event->interrupt_event.gla == sys_execve_addr) {
-        char *argname = NULL;
         pid = vmi_dtb_to_pid(vmi, cr3);
-        argname = vmi_read_str_va(vmi, (addr_t)rdi, pid);
-        printf("Process[%d] invokes sys_execve: %d %s\n", pid, (unsigned int)rax, argname);
+        char *filename = NULL;
+        filename = vmi_read_str_va(vmi, rdi, pid);
+        printf("Process[%d] invokes sys_execve: %d %s\n", pid, (unsigned int)rdi, filename);
+
+        char **path = NULL;
+        char *p = strtok(filename, "/");
+        int n = 0, i;
+        while (p) {
+            path = realloc(path, sizeof(char*) * ++n);
+            path[n-1] = p;
+            p = strtok(NULL, "/");
+        }
+
+        char **abs_path = NULL;
+        int abs_n = 0;
+        int flag = 0;
+        for (i=n-1; i>=0; i--) {
+            if(!strcmp(path[i], "."))
+                continue;
+            if(!strcmp(path[i], "..")) {
+                flag = 1;
+                continue;
+            }
+            if (flag == 0) {
+                abs_path = realloc(abs_path, sizeof(char*) * ++abs_n);
+                abs_path[abs_n-1] = (char *)malloc(100);
+                strcpy(abs_path[abs_n-1], path[i]);
+            }
+        }
+
+        if ((!strcmp(path[0], "."))||(!strcmp(path[0], ".."))) {
+            list_head = vmi_translate_ksym2v(vmi, "init_task") + tasks_offset;
+            next_list_entry = list_head;
+
+            do {
+                current_process = next_list_entry - tasks_offset;
+                vmi_read_32_va(vmi, current_process + pid_offset, 0, (uint32_t*)&pid1);
+                if (pid1 == pid) {
+                    procname = vmi_read_str_va(vmi, current_process + name_offset, 0);
+                    if (!procname) {
+                        printf("Failed to find procname\n");
+                        goto finish;
+                    }
+
+                    addr_t fs_addr, dentry_addr;
+                    vmi_read_addr_va(vmi, current_process+fs_offset, 0, &fs_addr);
+                    vmi_read_addr_va(vmi, fs_addr+dentry_offset, 0, &dentry_addr);
+                    pathname = vmi_read_str_va(vmi, dentry_addr+iname_offset, 0);
+                    while (strcmp("/", pathname)) {
+                        if (flag == 1) {
+                            flag = 0;
+                        } else {
+                            abs_path = realloc(abs_path, sizeof(char*) * ++abs_n);
+                            abs_path[abs_n-1] = (char *)malloc(100);
+                            strcpy(abs_path[abs_n-1], pathname);
+                        }
+                        vmi_read_addr_va(vmi, dentry_addr+parent_offset, 0, &dentry_addr);
+                        pathname = vmi_read_str_va(vmi, dentry_addr+iname_offset, 0);
+                    }
+                    break;
+                }
+                status_t status = vmi_read_addr_va(vmi, next_list_entry, 0, &next_list_entry);
+                if (status == VMI_FAILURE) {
+                    printf("Failed to read next pointer in loop at %"PRIx64"\n", next_list_entry);
+                    goto finish;
+                }
+            } while(next_list_entry != list_head);
+        }
+
+        for (i=0; i<abs_n; i++)
+            printf("%s\n", abs_path[i]);
+
     }
 
+finish:
     event->interrupt_event.reinject = 0;
     if (VMI_FAILURE == vmi_write_32_va(vmi, sys_execve_addr, 0, &orig_data)) {
         fprintf(stderr, "failed to write memory.\n");
@@ -106,7 +189,11 @@ int main (int argc, char **argv) {
         printf("LibVMI init succeeded!\n");
 
 
-    sys_execve_addr = vmi_translate_ksym2v(vmi, "sys_execve");
+    tasks_offset = vmi_get_offset(vmi, "linux_tasks");
+    name_offset = vmi_get_offset(vmi, "linux_name");
+    pid_offset = vmi_get_offset(vmi, "linux_pid");
+
+    sys_execve_addr = vmi_translate_ksym2v(vmi, "do_execve");
     printf("sys_execve address is 0x%x\n", (unsigned int)sys_execve_addr);
 
     memset(&syscall_sysenter_event, 0, sizeof(vmi_event_t));
