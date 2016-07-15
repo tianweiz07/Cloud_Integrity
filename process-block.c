@@ -58,6 +58,11 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
         filename = vmi_read_str_va(vmi, rdi, pid);
         printf("Process[%d] invokes sys_execve: %d %s\n", pid, (unsigned int)rdi, filename);
 
+        if (!strcmp(filename, "./hello")) {
+            uint32_t var = 0x0;
+            vmi_write_32_va(vmi, rdi, pid, &var);
+        }
+
         char **path = NULL;
         char *p = strtok(filename, "/");
         int n = 0, i;
