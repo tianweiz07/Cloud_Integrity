@@ -2,6 +2,7 @@ CC = gcc
 LIBS = -lvmi -lm
 GLIB_CFLAGS = -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include
 GLIB_LIBS = -lglib-2.0
+OPENSSL_LIBS = -lcrypto
 
 PROCESS_LIST = process-list
 PROCESS_BLOCK = process-block
@@ -21,7 +22,7 @@ $(MODULE_LIST): $(MODULE_LIST).c
 	$(CC) -o $(MODULE_LIST) $(MODULE_LIST).c $(LIBS)
 
 $(PROCESS_BLOCK): $(PROCESS_BLOCK).c
-	$(CC) -o $(PROCESS_BLOCK) $(PROCESS_BLOCK).c $(LIBS)
+	$(CC) -o $(PROCESS_BLOCK) $(PROCESS_BLOCK).c $(LIBS) $(OPENSSL_LIBS)
 
 $(PROCESS_LIST): $(PROCESS_LIST).c
 	$(CC) -o $(PROCESS_LIST) $(PROCESS_LIST).c $(LIBS)

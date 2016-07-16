@@ -5,6 +5,11 @@
 #include <sys/mman.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <sys/mount.h>
+#include <openssl/md5.h>
+
+
 
 #include <libvmi/libvmi.h>
 #include <libvmi/events.h>
@@ -30,6 +35,51 @@ unsigned long dentry_offset;
 unsigned long parent_offset;
 unsigned long iname_offset;
 
+/*
+  To get this, run the following commands:
+    kpartx -l vm.img
+    kpartx -a vm.img
+    mkdir /mnt/vm3
+
+*/
+const char *src = "/dev/mapper/uvm3-root";
+const char *dest = "/mnt/vm3";
+
+unsigned char sig[MD5_DIGEST_LENGTH] = {0x70, 0x14, 0x0f, 0xf8, 0x61, 0x37, 0xbd, 0x75, 0x7e, 0x14, 0x9e, 0xb2, 0xb9, 0x2b, 0xb8, 0xaf};
+
+
+int cal_hash(char *path, unsigned char *hash_val) {
+    char file_path[256] = "";
+    strcpy(file_path, dest);
+    strcat(file_path, path);
+
+    mount(src, dest, "ext4", MS_RDONLY, NULL);
+
+    int n;
+    MD5_CTX c;
+    char buf[512];
+    ssize_t bytes;
+    unsigned char out[MD5_DIGEST_LENGTH];
+
+    int file = open(file_path, O_RDONLY);
+
+    MD5_Init(&c);
+    bytes=read(file, buf, 512);
+    while(bytes > 0) {
+        MD5_Update(&c, buf, bytes);
+        bytes=read(file, buf, 512);
+    }
+
+    MD5_Final(out, &c);
+
+    strcpy(hash_val, out);
+
+    close(file);
+    umount(dest);
+
+    return 0;
+}
+
 
 event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
@@ -43,7 +93,7 @@ event_response_t single_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     return 0;
 }
 
-int find_absolute_path(vmi_instance_t vmi, char *filename) {
+int find_absolute_path(vmi_instance_t vmi, char *filename, char *filepath) {
     char **path = NULL;
     char *p = strtok(filename, "/");
     int n = 0, i;
@@ -116,8 +166,11 @@ int find_absolute_path(vmi_instance_t vmi, char *filename) {
         } while(next_list_entry != list_head);
     }
 
-    for (i=0; i<abs_n; i++)
-        printf("%s\n", abs_path[i]);
+    for (i=abs_n-1; i>=0; i--) {
+        strcat(filepath, "/");
+        strcat(filepath, abs_path[i]);
+    }
+
     return 0;
 }
 
@@ -134,6 +187,18 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
         filename = vmi_read_str_va(vmi, rdi, pid);
         printf("Process[%d] invokes sys_execve: %s\n", pid, filename);
 
+        char filepath[256] = "";
+        find_absolute_path(vmi, filename, filepath);
+        printf("%s\n", filepath);
+
+        unsigned char hash_val[MD5_DIGEST_LENGTH];
+        cal_hash(filepath, hash_val);
+        int n;
+        for(n=0; n<MD5_DIGEST_LENGTH; n++)
+            printf("%02x", hash_val[n]);
+        printf("\n");
+
+
 	/* This method can change the API's parameter into invalid, via modifying RDI registers. */
 /*
         if (!strcmp(filename, "./hello")) {
@@ -142,7 +207,7 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
         }
 */
         /* This method change the code path by modifying the RIP register, and return values in RAX */
-        if (!strcmp(filename, "./hello")) {
+        if (!strncmp(hash_val, sig, MD5_DIGEST_LENGTH)) {
             // Pop RIP out of stack
             vmi_set_vcpureg(vmi, rsp-8, RSP, event->vcpu_id);
             // Invalid the return value. If the return value is a pointer, can change to 0x0
@@ -152,8 +217,7 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
             vmi_read_64_va(vmi, rsp, pid, &rip);
             vmi_set_vcpureg(vmi, rip, RIP, event->vcpu_id);
         }
-
-        find_absolute_path(vmi, filename);
+       
     }
 
 
