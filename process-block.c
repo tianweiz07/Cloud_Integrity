@@ -209,7 +209,7 @@ event_response_t syscall_sysenter_cb(vmi_instance_t vmi, vmi_event_t *event){
         /* This method change the code path by modifying the RIP register, and return values in RAX */
         if (!strncmp(hash_val, sig, MD5_DIGEST_LENGTH)) {
             // Pop RIP out of stack
-            vmi_set_vcpureg(vmi, rsp-8, RSP, event->vcpu_id);
+            vmi_set_vcpureg(vmi, rsp+8, RSP, event->vcpu_id);
             // Invalid the return value. If the return value is a pointer, can change to 0x0
             vmi_set_vcpureg(vmi, -1, RAX, event->vcpu_id);
             // Change the RIP to the old one
