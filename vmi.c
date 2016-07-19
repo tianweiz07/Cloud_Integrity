@@ -1,9 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-
-#include "process-list.h"
+#include "vmi.h"
 
 int main (int argc, char *argv[]) {
     int opt = 0;
@@ -20,7 +15,10 @@ int main (int argc, char *argv[]) {
             case 'h':
                 printf("Usage: ./vmi -v [vm_name] -m [mode]\n");
                 printf("Supported Mode: \n");
-                printf("process-list: list the processes\n");
+                printf("process-list:	list the processes\n");
+                printf("module-list:	list the modules\n");
+                printf("syscall-check:	check if any syscall is hooked\n");
+                printf("network-check:	check if any network connection is hidden\n");
                 return 0;
             case 'v':
                 vm_name = optarg;
@@ -50,6 +48,12 @@ int main (int argc, char *argv[]) {
 
     if (!strcmp(mode, "process-list")) {
         introspect_process_list(vm_name);
+    } else if (!strcmp(mode, "module-list")) {
+        introspect_module_list(vm_name);
+    } else if (!strcmp(mode, "syscall-check")) {
+        introspect_syscall_check(vm_name);
+    } else if (!strcmp(mode, "network-check")) {
+        introspect_network_check(vm_name);
     }
 
     return 0;

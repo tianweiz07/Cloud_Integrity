@@ -1,4 +1,4 @@
-#include "process-list.h"
+#include "vmi.h"
 
 int introspect_process_list (char *name) {
     vmi_instance_t vmi;
@@ -12,6 +12,8 @@ int introspect_process_list (char *name) {
         return 1;
     }
 
+    vmi_resume_vm(vmi);
+
     /**
      * get offsets of the linux kernel data structures from the sysmap 
      */
@@ -23,6 +25,7 @@ int introspect_process_list (char *name) {
         printf("Failed to find offsets\n");
         goto exit;
     }
+
 
     /** 
      * get the head of the task_struct 
@@ -53,7 +56,6 @@ int introspect_process_list (char *name) {
         }
 
     } while(next_list_entry != list_head);
-
 
 exit:
     vmi_resume_vm(vmi);
