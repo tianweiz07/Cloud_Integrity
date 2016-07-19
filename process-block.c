@@ -45,15 +45,14 @@ unsigned long iname_offset;
 const char *src = "/dev/mapper/uvm3-root";
 const char *dest = "/mnt/vm3";
 
-unsigned char sig[MD5_DIGEST_LENGTH] = {0x70, 0x14, 0x0f, 0xf8, 0x61, 0x37, 0xbd, 0x75, 0x7e, 0x14, 0x9e, 0xb2, 0xb9, 0x2b, 0xb8, 0xaf};
-
+unsigned char sig[MD5_DIGEST_LENGTH] = {0x2e, 0x49, 0x7a, 0xb4, 0x96, 0xc2, 0xab, 0x8c, 0xc1, 0x44, 0x27, 0x92, 0x69, 0xda, 0x71, 0x8c};
 
 int cal_hash(char *path, unsigned char *hash_val) {
     char file_path[256] = "";
     strcpy(file_path, dest);
     strcat(file_path, path);
 
-    mount(src, dest, "ext4", MS_RDONLY, NULL);
+    mount(src, dest, "ext4", MS_RDONLY | MS_SYNCHRONOUS, NULL);
 
     int n;
     MD5_CTX c;
