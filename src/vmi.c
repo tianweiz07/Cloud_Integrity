@@ -21,7 +21,7 @@ int main (int argc, char *argv[]) {
                 printf("network-check:		Check if any network connection is hidden\n");
                 printf("syscall-trace:		Trace the system call made by any processes\n");
                 printf("socketapi-trace:	Trace the socket API made by any processes\n");
-                printf("drivgerapi-trace:	Trace the kernel device driver API made by any processes\n");
+                printf("driverapi-trace:	Trace the kernel device driver API made by any processes\n");
                 printf("process-block:		Block a process from launching if its image matches something\n");
                 printf("sleepapi-nop:		NOP the sleep calls to specified processes\n");
                 return 0;

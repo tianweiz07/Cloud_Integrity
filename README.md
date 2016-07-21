@@ -48,7 +48,7 @@ We support the following mode:
 - network-check:          Check if any network connection is hidden
 - syscall-trace:          Trace the system call made by any processes
 - socketapi-trace:        Trace the socket API made by any processes
-- drivgerapi-trace:       Trace the kernel device driver API made by any processes
+- driverapi-trace:       Trace the kernel device driver API made by any processes
 - process-block:          Block a process from launching if its image matches something
 - sleepapi-nop:           NOP the sleep calls to specified processes
 
