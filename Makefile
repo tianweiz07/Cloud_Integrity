@@ -1,22 +1,10 @@
-CC = gcc
-LIBS = -lvmi -lm
-OPENSSL_LIBS = -lcrypto
+CODE_DIR = src
 
-RM = rm -rf
+.PHONY: vmi
 
-MAIN = vmi
-PROCESS_LIST = process-list
-MODULE_LIST = module-list
-SYSCALL_CHECK = syscall-check
-NETWORK_CHECK = network-check
-
-OBJECTS = $(MAIN).o $(PROCESS_LIST).o $(MODULE_LIST).o $(SYSCALL_CHECK).o $(NETWORK_CHECK).o
-
-$(MAIN): $(OBJECTS)
-	$(CC) -o $(MAIN) $(OBJECTS) $(LIBS)
-
-$(OBJECTS): $(MAIN).h
-
-.PHONE: clean
+vmi:
+	$(MAKE) -C $(CODE_DIR)
+	cp $(CODE_DIR)/vmi ./
 clean:
-	$(RM) $(MAIN) $(OBJECTS)
+	$(MAKE) -C $(CODE_DIR) clean
+	rm -rf vmi

