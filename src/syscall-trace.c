@@ -6,6 +6,9 @@ vmi_event_t syscall_step_event;
 reg_t virt_lstar;
 addr_t phys_lstar;
 
+int num_sys = 0;
+char **sys_index = NULL;
+
 #ifndef MEM_EVENT
 uint32_t syscall_orig_data;
 #endif
@@ -48,10 +51,10 @@ event_response_t syscall_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         if (rax == 90 ) {
             char *argname = NULL;
             argname = vmi_read_str_va(vmi, rdi, pid);
-            printf("Process[%d]: Syscall %u happend, 1st argument=%s\n", pid, (unsigned int)rax, argname);
+            printf("Process[%d]: Syscall %s happend, 1st argument=%s\n", pid, sys_index[(unsigned int)rax], argname);
         }
         else
-            printf("Process[%d]: Syscall %u happened, 1st argument=%u\n", pid, (unsigned int)rax, (unsigned int)rdi);
+            printf("Process[%d]: Syscall %s happened, 1st argument=%u\n", pid, sys_index[(unsigned int)rax], (unsigned int)rdi);
     }
 
     /**
@@ -84,6 +87,19 @@ int introspect_syscall_trace (char *name) {
     sigaction(SIGTERM, &act, NULL);
     sigaction(SIGINT,  &act, NULL);
     sigaction(SIGALRM, &act, NULL);
+
+    char _line[256];
+    char _name[256];
+    int _index[256];
+
+    FILE *_file = fopen("syscall_index", "r");
+    while(fgets(_line, sizeof(_line), _file) != NULL){
+        sscanf(_line, "%d\t%s", _index, _name);
+        sys_index = realloc(sys_index, sizeof(char*) * ++num_sys);
+        sys_index[num_sys-1] = (char*) malloc(256);
+        strcpy(sys_index[num_sys-1], _name);
+    }
+    fclose(_file);
 
     vmi_instance_t vmi = NULL;
     if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){

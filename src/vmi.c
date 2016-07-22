@@ -69,6 +69,8 @@ int main (int argc, char *argv[]) {
         introspect_process_block(vm_name);
     } else if (!strcmp(mode, "sleepapi-nop")) {
         introspect_sleepapi_nop(vm_name);
+    } else {
+        printf("Mode %s is not supported\n", mode);
     }
 
     return 0;
