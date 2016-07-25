@@ -6,12 +6,15 @@ vmi_event_t accept_step_event;
 addr_t virt_sys_accept;
 addr_t phys_sys_accept;
 
+addr_t virt_return_sys_accept = 0;
+
+addr_t virt_sys_connect;
+
 #ifndef MEM_EVENT
 uint32_t sys_accept_orig_data;
+uint32_t sys_connect_orig_data;
 uint32_t return_sys_accept_orig_data;
 #endif
-
-addr_t virt_return_sys_accept = 0;
 
 addr_t sockaddr[32768];
 
@@ -24,12 +27,18 @@ event_response_t accept_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 #else
     accept_enter_event.interrupt_event.reinject = 1;
     if (set_breakpoint(vmi, virt_sys_accept, 0) < 0) {
-        printf("Could not set break points\n");
+        printf("3Could not set break points\n");
         exit(1);
     }
-    if (set_breakpoint(vmi, virt_return_sys_accept, 0) < 0) {
-        printf("Could not set break points\n");
+    if (set_breakpoint(vmi, virt_sys_connect, 0) < 0) {
+        printf("4Could not set break points\n");
         exit(1);
+    }
+    if (virt_return_sys_accept > 0) {
+        if (set_breakpoint(vmi, virt_return_sys_accept, 0) < 0) {
+            printf("5Could not set break points\n");
+            exit(1);
+        }
     }
 
 #endif
@@ -78,12 +87,34 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
              * insert breakpoint into the syscall entry function
              */
             if (set_breakpoint(vmi, virt_return_sys_accept, 0) < 0) {
-                printf("Could not set break points\n");
+                printf("6Could not set break points\n");
                 return -1;
             }
         }
 #endif       
     }
+
+#ifndef MEM_EVENT
+    else if (event->interrupt_event.gla == virt_sys_connect) {
+        reg_t cr3, rsi, rdx;
+        vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
+        vmi_get_vcpureg(vmi, &rsi, RSI, event->vcpu_id);
+        vmi_get_vcpureg(vmi, &rdx, RDX, event->vcpu_id);
+        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+
+        if ((int)rdx == 16) {
+            uint8_t ip_addr[4];
+            uint8_t port[2];
+            vmi_read_8_va(vmi, rsi+2, pid, &port[0]);
+            vmi_read_8_va(vmi, rsi+3, pid, &port[1]);
+            vmi_read_8_va(vmi, rsi+4, pid, &ip_addr[0]);
+            vmi_read_8_va(vmi, rsi+5, pid, &ip_addr[1]);
+            vmi_read_8_va(vmi, rsi+6, pid, &ip_addr[2]);
+            vmi_read_8_va(vmi, rsi+7, pid, &ip_addr[3]);
+            printf("Connect to %d:%d:%d:%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
+        }
+    }
+#endif
 
 #ifndef MEM_EVENT
     else if (event->interrupt_event.gla == virt_return_sys_accept) {
@@ -119,12 +150,16 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
                 printf("failed to write memory.\n");
                 exit(1);
             }
+        } else if (event->interrupt_event.gla == virt_sys_connect) {
+            if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_connect, 0, &sys_connect_orig_data)) {
+                printf("failed to write memory.\n");
+                exit(1);
+            }
         } else if (event->interrupt_event.gla == virt_return_sys_accept) {
             if (VMI_FAILURE == vmi_write_32_va(vmi, virt_return_sys_accept, 0, &return_sys_accept_orig_data)) {
                 printf("failed to write memory.\n");
                 exit(1);
             }
-
         }
 #endif
 
@@ -159,6 +194,8 @@ int introspect_socketapi_trace (char *name) {
      */
     virt_sys_accept = vmi_translate_ksym2v(vmi, "sys_accept");
     phys_sys_accept = vmi_translate_kv2p(vmi, virt_sys_accept);
+
+    virt_sys_connect = vmi_translate_ksym2v(vmi, "sys_connect");
 
     memset(&accept_enter_event, 0, sizeof(vmi_event_t));
 
@@ -208,11 +245,21 @@ int introspect_socketapi_trace (char *name) {
         return -1;
     }
 
+    if (VMI_FAILURE == vmi_read_32_va(vmi, virt_sys_connect, 0, &sys_connect_orig_data)) {
+        printf("failed to read the original data.\n");
+        vmi_destroy(vmi);
+        return -1;
+    }
+
     /**
      * insert breakpoint into the syscall entry function
      */
     if (set_breakpoint(vmi, virt_sys_accept, 0) < 0) {
-        printf("Could not set break points\n");
+        printf("1Could not set break points\n");
+        goto exit;
+    }
+    if (set_breakpoint(vmi, virt_sys_connect, 0) < 0) {
+        printf("2Could not set break points\n");
         goto exit;
     }
 #endif
@@ -231,6 +278,9 @@ exit:
      * write back the original data
      */
     if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_accept, 0, &sys_accept_orig_data)) {
+        printf("failed to write back the original data.\n");
+    }
+    if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_connect, 0, &sys_connect_orig_data)) {
         printf("failed to write back the original data.\n");
     }
     if (virt_return_sys_accept > 0) {
