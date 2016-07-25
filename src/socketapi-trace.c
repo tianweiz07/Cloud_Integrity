@@ -3,12 +3,16 @@
 vmi_event_t accept_enter_event;
 vmi_event_t accept_step_event;
 
+vmi_event_t accept_leave_event;
+
 addr_t virt_sys_accept;
 addr_t phys_sys_accept;
 
 addr_t virt_return_sys_accept = 0;
+addr_t phys_return_sys_accept = 0;
 
 addr_t virt_sys_connect;
+addr_t phys_sys_connect;
 
 #ifndef MEM_EVENT
 uint32_t sys_accept_orig_data;
@@ -18,12 +22,17 @@ uint32_t return_sys_accept_orig_data;
 
 addr_t sockaddr[32768];
 
+int event_flag = 0;
+
 event_response_t accept_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     /**
      * enable the syscall entry interrupt
      */
 #ifdef MEM_EVENT
-    vmi_register_event(vmi, &accept_enter_event);
+    if (event_flag == 1)
+        vmi_register_event(vmi, &accept_enter_event);
+    else if (event_flag == 3)
+        vmi_register_event(vmi, &accept_leave_event);
 #else
     accept_enter_event.interrupt_event.reinject = 1;
     if (set_breakpoint(vmi, virt_sys_accept, 0) < 0) {
@@ -55,7 +64,7 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
      * Case 1: entering the sys_accept syscall.
      */
 #ifdef MEM_EVENT
-    if (event->mem_event.gla == virt_sys_socket) {
+    if (event->mem_event.gla == virt_sys_accept) {
 #else
     if (event->interrupt_event.gla == virt_sys_accept) {
 #endif
@@ -76,11 +85,29 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
             vmi_read_64_va(vmi, rbp, pid, &rip);
 
             virt_return_sys_accept = rip;
+            phys_return_sys_accept = vmi_translate_kv2p(vmi, virt_return_sys_accept);
 
             /**
              * Set the event notification when sys_accept finishes.
              */
-#ifndef MEM_EVENT
+#ifdef MEM_EVENT
+            memset(&accept_leave_event, 0, sizeof(vmi_event_t));
+            
+            accept_leave_event.type = VMI_EVENT_MEMORY;
+            accept_leave_event.mem_event.physical_address = phys_return_sys_accept;
+            accept_leave_event.mem_event.npages = 1;
+            accept_leave_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
+            accept_leave_event.mem_event.in_access = VMI_MEMACCESS_X;
+            accept_leave_event.callback = accept_enter_cb;
+
+            /**
+             * register the event.
+             */
+            if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
+                printf("Could not install socket handler.\n");
+                return -1;
+            }   
+#else
             if (VMI_FAILURE == vmi_read_32_va(vmi, virt_return_sys_accept, 0, &return_sys_accept_orig_data)) {
                 printf("failed to read the original data.\n");
                 return -1;
@@ -93,15 +120,18 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
                 printf("Could not set break points\n");
                 return -1;
             }
-        }
 #endif       
+        }
     }
 
     /**
      * Case 2: entering the sys_connect syscall.
      */
-#ifndef MEM_EVENT
+#ifdef MEM_EVENT
+    else if (event->mem_event.gla == virt_sys_connect) {
+#else
     else if (event->interrupt_event.gla == virt_sys_connect) {
+#endif
         reg_t cr3, rsi, rdx;
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsi, RSI, event->vcpu_id);
@@ -123,13 +153,16 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
             printf("Connect to %d:%d:%d:%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
         }
     }
-#endif
 
     /**
      * Case 3: leaving the sys_accept syscall.
      */
-#ifndef MEM_EVENT
+
+#ifdef MEM_EVENT
+    else if (event->mem_event.gla == virt_return_sys_accept) {
+#else
     else if (event->interrupt_event.gla == virt_return_sys_accept) {
+#endif
         reg_t cr3, rax;
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rax, RAX, event->vcpu_id);
@@ -151,39 +184,45 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
             sockaddr[(int)pid] = 0;
         }
     }
-#endif
 
-        /**
-         * disable the syscall entry interrupt
-         */
+    /**
+     * disable the syscall entry interrupt
+     */
 #ifdef MEM_EVENT
-        vmi_clear_event(vmi, event, NULL);
+    vmi_clear_event(vmi, event, NULL);
+    if ((event->mem_event.gla >> 12) == (virt_sys_accept >> 12))
+        event_flag = 1;
+    else if ((event->mem_event.gla >> 12) == (virt_return_sys_accept >> 12))
+        event_flag = 3;
 #else
-        event->interrupt_event.reinject = 0;
-        if (event->interrupt_event.gla == virt_sys_accept) {
-            if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_accept, 0, &sys_accept_orig_data)) {
-                printf("failed to write memory.\n");
-                exit(1);
-            }
-        } else if (event->interrupt_event.gla == virt_sys_connect) {
-            if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_connect, 0, &sys_connect_orig_data)) {
-                printf("failed to write memory.\n");
-                exit(1);
-            }
-        } else if (event->interrupt_event.gla == virt_return_sys_accept) {
-            if (VMI_FAILURE == vmi_write_32_va(vmi, virt_return_sys_accept, 0, &return_sys_accept_orig_data)) {
-                printf("failed to write memory.\n");
-                exit(1);
-            }
+    event->interrupt_event.reinject = 0;
+    if (event->interrupt_event.gla == virt_sys_accept) {
+        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_accept, 0, &sys_accept_orig_data)) {
+            printf("failed to write memory.\n");
+            exit(1);
         }
+        event_flag = 1;
+    } else if (event->interrupt_event.gla == virt_sys_connect) {
+        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_connect, 0, &sys_connect_orig_data)) {
+            printf("failed to write memory.\n");
+            exit(1);
+        }
+        event_flag = 2;
+    } else if (event->interrupt_event.gla == virt_return_sys_accept) {
+        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_return_sys_accept, 0, &return_sys_accept_orig_data)) {
+            printf("failed to write memory.\n");
+            exit(1);
+        }
+        event_flag = 3;
+    }
 #endif
 
-        /**
-         * set the single event to execute one instruction
-         */
-        vmi_register_event(vmi, &accept_step_event);
+    /**
+     * set the single event to execute one instruction
+     */
+    vmi_register_event(vmi, &accept_step_event);
 
-        return 0;
+    return 0;
 }
 
 int introspect_socketapi_trace (char *name) {
@@ -211,19 +250,24 @@ int introspect_socketapi_trace (char *name) {
     phys_sys_accept = vmi_translate_kv2p(vmi, virt_sys_accept);
 
     virt_sys_connect = vmi_translate_ksym2v(vmi, "sys_connect");
+    phys_sys_connect = vmi_translate_kv2p(vmi, virt_sys_connect);
 
     memset(&accept_enter_event, 0, sizeof(vmi_event_t));
 
 #ifdef MEM_EVENT
     /**
      * iniialize the memory event for EPT violation.
+     * It happens that sys_accept and sys_connect are in the same page
+     * So just need one memory event.
+     * Error will be reported if specified two.
+     * If they are in different pages, then we need two separate memory events
      */
-    socket_enter_event.type = VMI_EVENT_MEMORY;
-    socket_enter_event.mem_event.physical_address = phys_sys_socket;
-    socket_enter_event.mem_event.npages = 1;
-    socket_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    socket_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    socket_enter_event.callback = socket_enter_cb;
+    accept_enter_event.type = VMI_EVENT_MEMORY;
+    accept_enter_event.mem_event.physical_address = phys_sys_accept;
+    accept_enter_event.mem_event.npages = 1;
+    accept_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
+    accept_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
+    accept_enter_event.callback = accept_enter_cb;
 #else
     /**
      * iniialize the interrupt event for INT3.
@@ -285,6 +329,7 @@ int introspect_socketapi_trace (char *name) {
             interrupted = -1;
         }
     }
+
 
 exit:
 
