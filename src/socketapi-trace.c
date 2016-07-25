@@ -27,16 +27,16 @@ event_response_t accept_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 #else
     accept_enter_event.interrupt_event.reinject = 1;
     if (set_breakpoint(vmi, virt_sys_accept, 0) < 0) {
-        printf("3Could not set break points\n");
+        printf("Could not set break points\n");
         exit(1);
     }
     if (set_breakpoint(vmi, virt_sys_connect, 0) < 0) {
-        printf("4Could not set break points\n");
+        printf("Could not set break points\n");
         exit(1);
     }
     if (virt_return_sys_accept > 0) {
         if (set_breakpoint(vmi, virt_return_sys_accept, 0) < 0) {
-            printf("5Could not set break points\n");
+            printf("Could not set break points\n");
             exit(1);
         }
     }
@@ -51,6 +51,9 @@ event_response_t accept_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 }
 
 event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
+    /**
+     * Case 1: entering the sys_accept syscall.
+     */
 #ifdef MEM_EVENT
     if (event->mem_event.gla == virt_sys_socket) {
 #else
@@ -87,13 +90,16 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
              * insert breakpoint into the syscall entry function
              */
             if (set_breakpoint(vmi, virt_return_sys_accept, 0) < 0) {
-                printf("6Could not set break points\n");
+                printf("Could not set break points\n");
                 return -1;
             }
         }
 #endif       
     }
 
+    /**
+     * Case 2: entering the sys_connect syscall.
+     */
 #ifndef MEM_EVENT
     else if (event->interrupt_event.gla == virt_sys_connect) {
         reg_t cr3, rsi, rdx;
@@ -102,6 +108,9 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &rdx, RDX, event->vcpu_id);
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
 
+        /**
+         * If this is called by the socket api, then the length of the parameter should be 16.
+         */
         if ((int)rdx == 16) {
             uint8_t ip_addr[4];
             uint8_t port[2];
@@ -116,6 +125,9 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     }
 #endif
 
+    /**
+     * Case 3: leaving the sys_accept syscall.
+     */
 #ifndef MEM_EVENT
     else if (event->interrupt_event.gla == virt_return_sys_accept) {
         reg_t cr3, rax;
@@ -123,6 +135,9 @@ event_response_t accept_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &rax, RAX, event->vcpu_id);
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
 
+        /**
+         * must check the pid is valid, and the return address is true.
+         */
         if (sockaddr[(int)pid] > 0 && ((int)rax > 0)) {
             uint8_t ip_addr[4];
             uint8_t port[2];
@@ -255,11 +270,11 @@ int introspect_socketapi_trace (char *name) {
      * insert breakpoint into the syscall entry function
      */
     if (set_breakpoint(vmi, virt_sys_accept, 0) < 0) {
-        printf("1Could not set break points\n");
+        printf("Could not set break points\n");
         goto exit;
     }
     if (set_breakpoint(vmi, virt_sys_connect, 0) < 0) {
-        printf("2Could not set break points\n");
+        printf("Could not set break points\n");
         goto exit;
     }
 #endif
