@@ -2,6 +2,7 @@
 
 vmi_event_t accept_enter_event;
 vmi_event_t accept_step_event;
+vmi_event_t connect_enter_event;
 
 addr_t virt_sys_accept;
 addr_t phys_sys_accept;
@@ -24,9 +25,14 @@ uint32_t sys_connect_orig_data;
 uint32_t leave_sys_accept_orig_data;
 #endif
 
-addr_t sockaddr[32768];
-
 int socket_event_type = 0;
+
+/** 
+ * socket structure offset 
+ */
+
+unsigned long port_offset;
+unsigned long ip_offset;
 
 event_response_t socket_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     /**
@@ -35,16 +41,13 @@ event_response_t socket_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 #ifdef MEM_EVENT
     if (socket_event_type == 1)
         vmi_register_event(vmi, &accept_enter_event);
+    else if (socket_event_type == 2)
+        vmi_register_event(vmi, &connect_enter_event);
     else if (socket_event_type == 3)
         vmi_register_event(vmi, &accept_leave_event);
 #else
     accept_enter_event.interrupt_event.reinject = 1;
-    if (socket_event_type == 1) {
-        if (set_breakpoint(vmi, virt_sys_accept, 0) < 0) {
-            printf("Could not set break points\n");
-            exit(1);
-        }
-    } else if (socket_event_type == 2) {
+    if (socket_event_type == 2) {
         if (set_breakpoint(vmi, virt_sys_connect, 0) < 0) {
             printf("Could not set break points\n");
             exit(1);
@@ -54,7 +57,7 @@ event_response_t socket_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
             printf("Could not set break points\n");
             exit(1);
         }
-    }
+    } 
 #endif
 
     /** 
@@ -74,6 +77,7 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
 
     /**
      * Case 1: entering the sys_accept syscall.
+     * This event should be interrupted at most once, to retrieve the return address of inet_csk_accept
      */
     if (event_addr == virt_sys_accept) {
         reg_t cr3, rsi;
@@ -81,55 +85,52 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
-        sockaddr[(int)pid] = rsi;
 
         /**
          * First time, the leave_sys_accept has not been set yet.
          */
-        if (virt_leave_sys_accept == 0) {
-            reg_t rbp;
-            vmi_get_vcpureg(vmi, &rbp, RSP, event->vcpu_id);
-            uint64_t rip;
-            vmi_read_64_va(vmi, rbp, pid, &rip);
+        reg_t rbp;
+        vmi_get_vcpureg(vmi, &rbp, RSP, event->vcpu_id);
+        uint64_t rip;
+        vmi_read_64_va(vmi, rbp, pid, &rip);
 
-            virt_leave_sys_accept = rip;
-            phys_leave_sys_accept = vmi_translate_kv2p(vmi, virt_leave_sys_accept);
+        virt_leave_sys_accept = rip;
+        phys_leave_sys_accept = vmi_translate_kv2p(vmi, virt_leave_sys_accept);
 
-            /**
-             * Set the event notification when sys_accept finishes.
-             */
+        /**
+         * Set the event notification when sys_accept finishes.
+         */
 #ifdef MEM_EVENT
-            /**
-             * initialize and register the event.
-             */
-            memset(&accept_leave_event, 0, sizeof(vmi_event_t));
-            
-            accept_leave_event.type = VMI_EVENT_MEMORY;
-            accept_leave_event.mem_event.physical_address = phys_leave_sys_accept;
-            accept_leave_event.mem_event.npages = 1;
-            accept_leave_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-            accept_leave_event.mem_event.in_access = VMI_MEMACCESS_X;
-            accept_leave_event.callback = socket_enter_cb;
+        /**
+         * initialize and register the event.
+         */
+        memset(&accept_leave_event, 0, sizeof(vmi_event_t));
+           
+        accept_leave_event.type = VMI_EVENT_MEMORY;
+        accept_leave_event.mem_event.physical_address = phys_leave_sys_accept;
+        accept_leave_event.mem_event.npages = 1;
+        accept_leave_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
+        accept_leave_event.mem_event.in_access = VMI_MEMACCESS_X;
+        accept_leave_event.callback = socket_enter_cb;
 
-            if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
-                printf("Could not install socket handler.\n");
-                return -1;
-            }   
+        if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
+            printf("Could not install socket handler.\n");
+            return -1;
+        }   
 #else
-            if (VMI_FAILURE == vmi_read_32_va(vmi, virt_leave_sys_accept, 0, &leave_sys_accept_orig_data)) {
-                printf("failed to read the original data.\n");
-                return -1;
-            }
-
-            /**
-             * insert breakpoint into the syscall entry function
-             */
-            if (set_breakpoint(vmi, virt_leave_sys_accept, 0) < 0) {
-                printf("Could not set break points\n");
-                return -1;
-            }
-#endif       
+        if (VMI_FAILURE == vmi_read_32_va(vmi, virt_leave_sys_accept, 0, &leave_sys_accept_orig_data)) {
+            printf("failed to read the original data.\n");
+            return -1;
         }
+
+        /**
+         * insert breakpoint into the syscall leave function
+         */
+        if (set_breakpoint(vmi, virt_leave_sys_accept, 0) < 0) {
+            printf("Could not set break points\n");
+            return -1;
+        }
+#endif       
     }
 
     /**
@@ -170,17 +171,13 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         /**
          * must check the pid is valid, and the return address is true.
          */
-        if (sockaddr[(int)pid] > 0 && ((int)rax > 0)) {
-            uint8_t ip_addr[4];
-            uint8_t port[2];
-            vmi_read_8_va(vmi, sockaddr[(int)pid]+2, pid, &port[0]);
-            vmi_read_8_va(vmi, sockaddr[(int)pid]+3, pid, &port[1]);
-            vmi_read_8_va(vmi, sockaddr[(int)pid]+4, pid, &ip_addr[0]);
-            vmi_read_8_va(vmi, sockaddr[(int)pid]+5, pid, &ip_addr[1]);
-            vmi_read_8_va(vmi, sockaddr[(int)pid]+6, pid, &ip_addr[2]);
-            vmi_read_8_va(vmi, sockaddr[(int)pid]+7, pid, &ip_addr[3]);
-            printf("Accept connection from %d.%d.%d.%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
-            sockaddr[(int)pid] = 0;
+
+        if (rax > 0) {
+            uint16_t port;
+            uint32_t ip_addr;
+            vmi_read_16_va(vmi, rax + port_offset, 0, &port);
+            vmi_read_32_va(vmi, rax + ip_offset, 0, &ip_addr);
+            printf("Accept connection from %d.%d.%d.%d:%d\n", ip_addr&0xff, (ip_addr>>8)&0xff, (ip_addr>>16)&0xff, (ip_addr>>24)&0xff, port);
         }
     }
 
@@ -189,11 +186,16 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
      */
 #ifdef MEM_EVENT
     vmi_clear_event(vmi, event, NULL);
-    if ((event_addr >> 12) == (virt_sys_accept >> 12))
-        socket_event_type = 1;
-    else if ((event_addr >> 12) == (virt_leave_sys_accept >> 12))
+    if ((event_addr >> 12) == (virt_sys_accept >> 12)) {
+        if (event_addr != virt_sys_accept)
+            socket_event_type = 1;
+        else
+            socket_event_type = 0;
+    } else if ((event_addr >> 12) == (virt_sys_connect >> 12)) {
+        socket_event_type = 2;
+    } else if ((event_addr >> 12) == (virt_leave_sys_accept >> 12)) {
         socket_event_type = 3;
-    else {
+    } else {
         printf("Error in disabling event\n");
         return -1;
     }
@@ -250,22 +252,26 @@ int introspect_socketapi_trace (char *name) {
     }
 
     /**
+     * socket struct offsets can be obtained by running findsocket
+     */
+    port_offset = 0x280;
+    ip_offset = 0x278;
+
+    /**
      * get the address of sys_socket from the sysmap
      */
-    virt_sys_accept = vmi_translate_ksym2v(vmi, "sys_accept");
+    virt_sys_accept = vmi_translate_ksym2v(vmi, "inet_csk_accept");
     phys_sys_accept = vmi_translate_kv2p(vmi, virt_sys_accept);
 
     virt_sys_connect = vmi_translate_ksym2v(vmi, "sys_connect");
     phys_sys_connect = vmi_translate_kv2p(vmi, virt_sys_connect);
+
 
     memset(&accept_enter_event, 0, sizeof(vmi_event_t));
 
 #ifdef MEM_EVENT
     /**
      * iniialize the memory event for EPT violation.
-     * It happens that sys_accept and sys_connect are in the same page
-     * So just need one memory event, and error will be reported if specified two.
-     * If they are in different pages, then we need two separate memory events
      */
     accept_enter_event.type = VMI_EVENT_MEMORY;
     accept_enter_event.mem_event.physical_address = phys_sys_accept;
@@ -273,6 +279,13 @@ int introspect_socketapi_trace (char *name) {
     accept_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
     accept_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
     accept_enter_event.callback = socket_enter_cb;
+
+    connect_enter_event.type = VMI_EVENT_MEMORY;
+    connect_enter_event.mem_event.physical_address = phys_sys_connect;
+    connect_enter_event.mem_event.npages = 1;
+    connect_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
+    connect_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
+    connect_enter_event.callback = socket_enter_cb;
 #else
     /**
      * iniialize the interrupt event for INT3.
@@ -299,7 +312,12 @@ int introspect_socketapi_trace (char *name) {
         goto exit;
     }
 
-#ifndef MEM_EVENT
+#ifdef MEM_EVENT
+    if(vmi_register_event(vmi, &connect_enter_event) == VMI_FAILURE) {
+        printf("Could not install socket handler.\n");
+        goto exit;
+    }
+#else
     /**
      * store the original data for syscall entry function
      */

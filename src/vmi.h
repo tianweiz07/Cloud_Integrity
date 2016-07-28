@@ -17,7 +17,7 @@
  * if MEM_EVENT is defined, then using EPT violation
  */
 
-//#define MEM_EVENT
+#define MEM_EVENT
 
 
 /* task_struct offsets */
