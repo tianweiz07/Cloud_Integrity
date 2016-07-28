@@ -154,7 +154,7 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
             vmi_read_8_va(vmi, rsi+5, pid, &ip_addr[1]);
             vmi_read_8_va(vmi, rsi+6, pid, &ip_addr[2]);
             vmi_read_8_va(vmi, rsi+7, pid, &ip_addr[3]);
-            printf("Connect to %d:%d:%d:%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
+            printf("Connect to %d.%d.%d.%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
         }
     }
 
@@ -179,7 +179,7 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
             vmi_read_8_va(vmi, sockaddr[(int)pid]+5, pid, &ip_addr[1]);
             vmi_read_8_va(vmi, sockaddr[(int)pid]+6, pid, &ip_addr[2]);
             vmi_read_8_va(vmi, sockaddr[(int)pid]+7, pid, &ip_addr[3]);
-            printf("Accept connection from %d:%d:%d:%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
+            printf("Accept connection from %d.%d.%d.%d:%d\n", ip_addr[0], ip_addr[1], ip_addr[2], ip_addr[3], port[0]*256+port[1]);
             sockaddr[(int)pid] = 0;
         }
     }
