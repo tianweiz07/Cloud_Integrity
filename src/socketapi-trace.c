@@ -103,7 +103,11 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
 #ifdef MEM_EVENT
         /**
          * initialize and register the event.
+         * It turns out that the inet_stream_connect is on the same page with the return address of inet_csk_accept
+         * so no need to set up and register a new event
+         * Otherwise you need to set up an new event
          */
+
         memset(&accept_leave_event, 0, sizeof(vmi_event_t));
            
         accept_leave_event.type = VMI_EVENT_MEMORY;
@@ -113,10 +117,12 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         accept_leave_event.mem_event.in_access = VMI_MEMACCESS_X;
         accept_leave_event.callback = socket_enter_cb;
 
-        if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
-            printf("Could not install socket handler.\n");
-            return -1;
-        }   
+        if ((virt_leave_sys_accept >> 12) != (virt_sys_accept >> 12) && (virt_leave_sys_accept >> 12) != (virt_sys_connect >> 12)) {
+            if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
+                printf("Could not install socket handler3.\n");
+                return -1;
+            }   
+        }
 #else
         if (VMI_FAILURE == vmi_read_32_va(vmi, virt_leave_sys_accept, 0, &leave_sys_accept_orig_data)) {
             printf("failed to read the original data.\n");
@@ -263,7 +269,7 @@ int introspect_socketapi_trace (char *name) {
     virt_sys_accept = vmi_translate_ksym2v(vmi, "inet_csk_accept");
     phys_sys_accept = vmi_translate_kv2p(vmi, virt_sys_accept);
 
-    virt_sys_connect = vmi_translate_ksym2v(vmi, "sys_connect");
+    virt_sys_connect = vmi_translate_ksym2v(vmi, "inet_stream_connect");
     phys_sys_connect = vmi_translate_kv2p(vmi, virt_sys_connect);
 
 
