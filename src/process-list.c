@@ -16,9 +16,15 @@ int introspect_process_list (char *name) {
     /**
      * get offsets of the linux kernel data structures from the sysmap 
      */
-    tasks_offset = vmi_get_offset(vmi, "linux_tasks");
-    name_offset = vmi_get_offset(vmi, "linux_name");
-    pid_offset = vmi_get_offset(vmi, "linux_pid");
+    if (vmi_get_ostype(vmi) == VMI_OS_LINUX) {
+        tasks_offset = vmi_get_offset(vmi, "linux_tasks");
+        name_offset = vmi_get_offset(vmi, "linux_name");
+        pid_offset = vmi_get_offset(vmi, "linux_pid");
+    } else if (vmi_get_ostype(vmi) == VMI_OS_WINDOWS) {
+        tasks_offset = vmi_get_offset(vmi, "win_tasks");
+        name_offset = vmi_get_offset(vmi, "win_pname");
+        pid_offset = vmi_get_offset(vmi, "win_pid");
+    }
 
     if (tasks_offset == 0 || pid_offset == 0 || name_offset == 0) {
         printf("Failed to find offsets\n");
@@ -29,7 +35,12 @@ int introspect_process_list (char *name) {
     /** 
      * get the head of the task_struct 
      */
-    list_head = vmi_translate_ksym2v(vmi, "init_task") + tasks_offset;
+    if (vmi_get_ostype(vmi) == VMI_OS_LINUX) {
+        list_head = vmi_translate_ksym2v(vmi, "init_task") + tasks_offset;
+    } else if (vmi_get_ostype(vmi)) {
+        list_head = vmi_translate_ksym2v(vmi, "PsActiveProcessHead");
+    }
+
     next_list_entry = list_head;
 
     /** 
