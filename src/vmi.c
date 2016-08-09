@@ -24,6 +24,7 @@ int main (int argc, char *argv[]) {
                 printf("driverapi-trace:	Trace the kernel device driver API made by any processes\n");
                 printf("process-block:		Block a process from launching if its image matches something\n");
                 printf("sleepapi-nop:		NOP the sleep calls to specified processes\n");
+                printf("process-kill:		Kill a process at runtime given its pid\n");
                 return 0;
             case 'v':
                 vm_name = optarg;
@@ -69,6 +70,8 @@ int main (int argc, char *argv[]) {
         introspect_process_block(vm_name);
     } else if (!strcmp(mode, "sleepapi-nop")) {
         introspect_sleepapi_nop(vm_name);
+    } else if (!strcmp(mode, "process-kill")) {
+        introspect_process_kill(vm_name);
     } else {
         printf("Mode %s is not supported\n", mode);
     }

@@ -17,7 +17,7 @@
  * if MEM_EVENT is defined, then using EPT violation
  */
 
-#define MEM_EVENT
+//#define MEM_EVENT
 
 
 /* task_struct offsets */
@@ -26,7 +26,6 @@ unsigned long pid_offset;
 unsigned long name_offset;
 
 
-#ifndef MEM_EVENT
 static int set_breakpoint(vmi_instance_t vmi, addr_t addr, pid_t pid) {
 
     uint32_t data;
@@ -41,7 +40,6 @@ static int set_breakpoint(vmi_instance_t vmi, addr_t addr, pid_t pid) {
     }
     return 0;
 }
-#endif
 
 static int interrupted = 0;
 
@@ -66,3 +64,5 @@ int introspect_driverapi_trace(char *name);
 int introspect_sleepapi_nop(char *name);
 
 int introspect_process_block(char *name);
+
+int introspect_process_kill(char *name);
