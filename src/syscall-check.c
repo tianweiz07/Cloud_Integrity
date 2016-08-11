@@ -2,10 +2,10 @@
 
 int introspect_syscall_check(char *name) {
     vmi_instance_t vmi;
-    addr_t sys_call_table_addr, sys_call_addr, stext, etext;
+    addr_t sys_call_table_addr, sys_call_addr, kernel_start, kernel_end;
     int count_syscall = 0;
 
-    int num_sys = 0;
+    uint32_t num_sys = 0;
     char **sys_index = NULL;;
 
     char _line[256];
@@ -27,26 +27,60 @@ int introspect_syscall_check(char *name) {
         return 1;
     }
 
-    /**
-     * get syscall table address 
-     */
-    sys_call_table_addr = vmi_translate_ksym2v(vmi, "sys_call_table");
 
 
-    /**
-     * get kernel function boundary
-     */
-    stext = vmi_translate_ksym2v(vmi, "_stext");
-    etext = vmi_translate_ksym2v(vmi, "_etext");
+    addr_t ntoskrnl, kernel_size;
+    addr_t SSDT;
+    int start_index, end_index;
+
+
+    switch(vmi_get_ostype(vmi)) {
+        case VMI_OS_LINUX:
+            /**
+             * get syscall table address 
+             */
+            sys_call_table_addr = vmi_translate_ksym2v(vmi, "sys_call_table");
+            /**
+             * get kernel function boundary
+             */
+            kernel_start = vmi_translate_ksym2v(vmi, "_stext");
+            kernel_end = vmi_translate_ksym2v(vmi, "_etext");
+
+            start_index = 0;
+            end_index = num_sys;
+
+            break;
+        case VMI_OS_WINDOWS:
+            SSDT = vmi_translate_ksym2v(vmi, "KeServiceDescriptorTable");
+            vmi_read_addr_va(vmi, SSDT, 0, &sys_call_table_addr);
+            vmi_read_32_va(vmi, SSDT+16, 0, &num_sys);
+
+            vmi_read_addr_ksym(vmi, "PsLoadedModuleList", &ntoskrnl);
+            vmi_read_64_va(vmi, ntoskrnl + 0x30, 0, &kernel_start);
+            vmi_read_64_va(vmi, ntoskrnl + 0x40, 0, &kernel_size);
+            kernel_end = kernel_start + kernel_size;
+
+            /**
+             * I don't know why the first 217 entries do not store the syscall pointer. 
+             */
+            start_index = 217;
+            end_index = num_sys;
+            break;
+        default:
+            goto exit;
+    }
+            
+
 
     int i = 0;
-    for (i=0; i<num_sys; i++) {
+    for (i=start_index; i<end_index; i++) {
         vmi_read_addr_va(vmi, sys_call_table_addr+i*8, 0, &sys_call_addr);
-        if (sys_call_addr < stext || sys_call_addr > etext) {
-            printf("sys_call %s address changed to 0x%x\n", sys_index[i], (unsigned int)sys_call_addr);
+        if (sys_call_addr < kernel_start || sys_call_addr > kernel_end) {
+            printf("sys_call %s address changed to 0x%" PRIx64 "\n", sys_index[i], sys_call_addr);
             count_syscall ++;
         }
     }
+
     printf("%d syscalls have been hooked\n", count_syscall);
 
 exit:

@@ -12,7 +12,7 @@ int kill_flag = -1;
 
 reg_t rax_orig, rbx_orig, rcx_orig, rdx_orig, rbp_orig, rsi_orig, rsp_orig, rip_orig;
 
-#define KILL_PID 2517
+#define KILL_PID 3729
 
 void save_context(vmi_instance_t vmi, vmi_event_t *event) {
 
