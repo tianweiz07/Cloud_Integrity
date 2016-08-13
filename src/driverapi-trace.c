@@ -6,10 +6,8 @@
  * For INT3, we only need one
  */
 vmi_event_t module_enter_event;
-vmi_event_t module_step_event;
-
 vmi_event_t chrdev_enter_event;
-vmi_event_t chrdev_step_event;
+vmi_event_t module_step_event;
 
 addr_t virt_register_chrdev;
 addr_t phys_register_chrdev;
@@ -22,38 +20,29 @@ uint32_t register_chrdev_orig_data;
 uint32_t mod_sysfs_setup_orig_data;
 #endif
 
-event_response_t chrdev_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
+int driver_event_type = 0;
+
+event_response_t driver_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     /**
      * enable the syscall entry interrupt
      */
 #ifdef MEM_EVENT
-    vmi_register_event(vmi, &chrdev_enter_event);
-#else
-    chrdev_enter_event.interrupt_event.reinject = 1;
-    if (set_breakpoint(vmi, virt_register_chrdev, 0) < 0) {
-        printf("Could not set break points\n");
-        exit(1);
-    }
-#endif
-
-    /** 
-     * disable the single event
-     */
-    vmi_clear_event(vmi, &chrdev_step_event, NULL);
-    return 0;
-}
-
-event_response_t module_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
-    /**
-     * enable the syscall entry interrupt
-     */
-#ifdef MEM_EVENT
-    vmi_register_event(vmi, &module_enter_event);
+    if (driver_event_type == 1)
+        vmi_register_event(vmi, &module_enter_event);
+    else if (driver_event_type == 2)
+        vmi_register_event(vmi, &chrdev_enter_event);
 #else
     module_enter_event.interrupt_event.reinject = 1;
-    if (set_breakpoint(vmi, virt_mod_sysfs_setup, 0) < 0) {
-        printf("Could not set break points\n");
-        exit(1);
+    if (driver_event_type == 1) {
+        if (set_breakpoint(vmi, virt_mod_sysfs_setup, 0) < 0) {
+            printf("Could not set break points\n");
+            exit(1);
+        }
+    } else if (driver_event_type == 2) {
+        if (set_breakpoint(vmi, virt_register_chrdev, 0) < 0) {
+            printf("Could not set break points\n");
+            exit(1);
+        }
     }
 #endif
 
@@ -65,96 +54,91 @@ event_response_t module_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 }
 
 
-event_response_t chrdev_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
-    /**
-     * INT3 event will never reach this function
-     */
-    if (event->mem_event.gla == virt_register_chrdev) {
-        reg_t rcx, cr3;
-        vmi_get_vcpureg(vmi, &rcx, RCX, event->vcpu_id);
-        vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
-        char *argname = NULL;
-        argname = vmi_read_str_va(vmi, rcx, 0);
-        printf("Process [%d] registers a Character Device: %s\n", pid, argname);
-        free(argname);
-    }
-
-    /**
-     * disable the syscall entry interrupt
-     */
-    vmi_clear_event(vmi, event, NULL);
-
-    /**
-     * set the single event to execute one instruction
-     */
-    vmi_register_event(vmi, &chrdev_step_event);
-    return 0;
-}
-
-
-event_response_t module_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
+event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
+    addr_t event_addr;
 #ifdef MEM_EVENT
-    if (event->mem_event.gla == virt_mod_sysfs_setup) {
+    event_addr = event->mem_event.gla;
+#else
+    event_addr = event->interrupt_event.gla;
+#endif
+
+    /**
+     * Case 1: loading kernel modules
+     */
+    if (event_addr == virt_mod_sysfs_setup) {
         reg_t rdi, cr3;
         vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
         char *argname = NULL;
-        argname = vmi_read_str_va(vmi, (addr_t)rdi+24, 0);
-        printf("Process [%d] inserts a kernel module: %s\n", pid, argname);
+        addr_t offset;
+        int size;
+        argname = vmi_read_str_va(vmi, (addr_t)rdi+0x18, 0);
+        vmi_read_64_va(vmi, (addr_t)rdi+0x158, 0, &offset);
+        vmi_read_32_va(vmi, (addr_t)rdi+0x164, 0, &size);
+
+        printf("Process [%d] inserts a kernel module: %s Addr: 0x%" PRIx64 " - 0x%" PRIx64 "\n", pid, argname, offset, offset+size);
         free(argname);
+    }
+
+    /**
+     * Case 2: registering the events
+     */
+    else if (event_addr == virt_register_chrdev) {
+        reg_t rcx, cr3, rsp;
+        vmi_get_vcpureg(vmi, &rcx, RCX, event->vcpu_id);
+        vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
+        vmi_get_vcpureg(vmi, &rsp, RSP, event->vcpu_id);
+
+        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        char *argname = NULL;
+        argname = vmi_read_str_va(vmi, rcx, 0);
+        addr_t inst;
+        vmi_read_64_va(vmi, rsp, pid, &inst);
+        printf("Process [%d] registers a Character Device: %s with return address 0x%" PRIx64 "\n", pid, argname, inst);
+        free(argname);
+        
     }
 
     /**
      * disable the syscall entry interrupt
      */
+#ifdef MEM_EVENT
     vmi_clear_event(vmi, event, NULL);
+    if ((event_addr >> 12) == (virt_mod_sysfs_setup >> 12)) {
+        driver_event_type = 1;
+    } else if ((event_addr >> 12) == (virt_register_chrdev >> 12)) {
+        driver_event_type = 2;
+    } else {
+        printf("Error in disabling event\n");
+        return -1;
+    }
+
+#else
+    event->interrupt_event.reinject = 0;
+    if (event_addr == virt_mod_sysfs_setup) {
+        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_mod_sysfs_setup, 0, &mod_sysfs_setup_orig_data)) {
+            printf("failed to write memory.\n");
+            exit(1);
+        }
+        driver_event_type = 1;
+    } else if (event_addr == virt_register_chrdev) {
+        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_register_chrdev, 0, &register_chrdev_orig_data)) {
+            printf("failed to write memory.\n");
+            exit(1);
+        }
+        driver_event_type = 2;
+    } else {
+        printf("Error in disabling event\n");
+        return -1;
+    }
+#endif
 
     /**
      * set the single event to execute one instruction
      */
     vmi_register_event(vmi, &module_step_event);
-#else
-    if (event->interrupt_event.gla == virt_mod_sysfs_setup) {
-        reg_t rdi, cr3;
-        vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
-        vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
-        char *argname = NULL;
-        argname = vmi_read_str_va(vmi, (addr_t)rdi+24, 0);
-        printf("Process [%d] inserts a kernel module: %s\n", pid, argname);
-        free(argname);
-
-        event->interrupt_event.reinject = 0;
-        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_mod_sysfs_setup, 0, &mod_sysfs_setup_orig_data)) {
-            printf("failed to write memory.\n");
-            exit(1);
-        }
-        vmi_register_event(vmi, &module_step_event);
-    } else if (event->interrupt_event.gla == virt_register_chrdev) {
-        reg_t rcx, cr3;
-        vmi_get_vcpureg(vmi, &rcx, RCX, event->vcpu_id);
-        vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
-        char *argname = NULL;
-        argname = vmi_read_str_va(vmi, rcx, 0);
-        printf("Process [%d] registers a Character Device: %s\n", pid, argname);
-        free(argname);
-
-        event->interrupt_event.reinject = 0;
-        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_register_chrdev, 0, &register_chrdev_orig_data)) {
-            printf("failed to write memory.\n");
-            exit(1);
-        }
-        vmi_register_event(vmi, &chrdev_step_event);
-    }
-        
-#endif
 
     return 0;
 }
@@ -199,35 +183,29 @@ int introspect_driverapi_trace (char *name) {
     chrdev_enter_event.mem_event.npages = 1;
     chrdev_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
     chrdev_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    chrdev_enter_event.callback = chrdev_enter_cb;
+    chrdev_enter_event.callback = driver_enter_cb;
 
     module_enter_event.type = VMI_EVENT_MEMORY;
     module_enter_event.mem_event.physical_address = phys_mod_sysfs_setup;
     module_enter_event.mem_event.npages = 1;
     module_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
     module_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    module_enter_event.callback = module_enter_cb;
+    module_enter_event.callback = driver_enter_cb;
 #else
     /**
      * iniialize the interrupt event for INT3.
      */
     module_enter_event.type = VMI_EVENT_INTERRUPT;
     module_enter_event.interrupt_event.intr = INT3;
-    module_enter_event.callback = module_enter_cb;
+    module_enter_event.callback = driver_enter_cb;
 #endif
 
     /**
      * iniialize the single step event.
      */
-    memset(&chrdev_step_event, 0, sizeof(vmi_event_t));
-    chrdev_step_event.type = VMI_EVENT_SINGLESTEP;
-    chrdev_step_event.callback = chrdev_step_cb;
-    chrdev_step_event.ss_event.enable = 1;
-    SET_VCPU_SINGLESTEP(chrdev_step_event.ss_event, 0);
-
     memset(&module_step_event, 0, sizeof(vmi_event_t));
     module_step_event.type = VMI_EVENT_SINGLESTEP;
-    module_step_event.callback = module_step_cb;
+    module_step_event.callback = driver_step_cb;
     module_step_event.ss_event.enable = 1;
     SET_VCPU_SINGLESTEP(module_step_event.ss_event, 0);
 
