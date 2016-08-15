@@ -98,7 +98,14 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_read_64_va(vmi, rsp, pid, &inst);
         printf("Process [%d] registers a Character Device: %s with return address 0x%" PRIx64 "\n", pid, argname, inst);
         free(argname);
-        
+
+        /**
+         * The following three lines of codes can bypass the register_chardev with returning value as error.
+         */
+//        vmi_set_vcpureg(vmi, rsp+8, RSP, event->vcpu_id);
+//        vmi_set_vcpureg(vmi, -1, RAX, event->vcpu_id);
+//        vmi_set_vcpureg(vmi, inst, RIP, event->vcpu_id);
+
     }
 
     /**
