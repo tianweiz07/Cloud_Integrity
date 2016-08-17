@@ -65,4 +65,4 @@ int introspect_sleepapi_nop(char *name);
 
 int introspect_process_block(char *name);
 
-int introspect_process_kill(char *name);
+int introspect_process_kill(char *name, char *arg);

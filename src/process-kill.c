@@ -12,7 +12,7 @@ int kill_flag = -1;
 
 reg_t rax_orig, rbx_orig, rcx_orig, rdx_orig, rbp_orig, rsi_orig, rsp_orig, rip_orig;
 
-#define KILL_PID 3729
+int KILL_PID;
 
 void save_context(vmi_instance_t vmi, vmi_event_t *event) {
 
@@ -87,7 +87,9 @@ event_response_t kill_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     return 0;
 }
 
-int introspect_process_kill (char *name) {
+int introspect_process_kill (char *name, char *arg) {
+
+    KILL_PID = atoi(arg);
 
     struct sigaction act;
     act.sa_handler = close_handler;
@@ -105,6 +107,10 @@ int introspect_process_kill (char *name) {
         return 1;
     }
 
+    /**
+     * We monitor the syscall sys_opctl, which is the most common one
+     * Once this syscall happens, then the system will kill the process
+     */
     virt_ioctl = vmi_translate_ksym2v(vmi, "sys_ioctl");
 
     memset(&kill_enter_event, 0, sizeof(vmi_event_t));

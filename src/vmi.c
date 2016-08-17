@@ -4,13 +4,14 @@ int main (int argc, char *argv[]) {
     int opt = 0;
     char *vm_name = NULL;
     char *mode = NULL;
+    char *arg = NULL;
 
     /**
      * Parsing Parameters
      * -v: vm name listed by xl list
      * -m: mode option
      */
-    while ((opt = getopt(argc, argv, "v:m:h")) != -1) {
+    while ((opt = getopt(argc, argv, "v:m:r:h")) != -1) {
         switch(opt) {
             case 'h':
                 printf("Usage: ./vmi -v [vm_name] -m [mode]\n");
@@ -31,6 +32,9 @@ int main (int argc, char *argv[]) {
                 break;
             case 'm':
                 mode = optarg;
+                break;
+            case 'r':
+                arg = optarg;
                 break;
             case '?':
                 if (optopt == 'v') {
@@ -71,7 +75,11 @@ int main (int argc, char *argv[]) {
     } else if (!strcmp(mode, "sleepapi-nop")) {
         introspect_sleepapi_nop(vm_name);
     } else if (!strcmp(mode, "process-kill")) {
-        introspect_process_kill(vm_name);
+        if (arg == NULL) {
+            printf("Missing process id to kill\n");
+            return 0;
+        }
+        introspect_process_kill(vm_name, arg);
     } else {
         printf("Mode %s is not supported\n", mode);
     }

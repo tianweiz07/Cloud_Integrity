@@ -117,7 +117,6 @@ int introspect_syscall_trace (char *name) {
      * lstar register restores the syscall entry address
      */
     vmi_get_vcpureg(vmi, &virt_lstar, MSR_LSTAR, 0);
-//    virt_lstar = vmi_translate_ksym2v(vmi, "NtDelayExecution");
     phys_lstar = vmi_translate_kv2p(vmi, virt_lstar);
 
     memset(&syscall_enter_event, 0, sizeof(vmi_event_t));
