@@ -48,13 +48,18 @@ event_response_t syscall_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
 
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
 
-        if (rax == 90 ) {
+        uint16_t _index = (uint16_t)rax;
+        if (_index >= num_sys) {
+            printf("Process[%d]: unknown syscall id: %d\n", pid, _index);
+
+        } else if (_index == 90 ) {
             char *argname = NULL;
             argname = vmi_read_str_va(vmi, rdi, pid);
-            printf("Process[%d]: Syscall %s happend, 1st argument=%s\n", pid, sys_index[(unsigned int)rax], argname);
+            printf("Process[%d]: Syscall %s happend, 1st argument=%s\n", pid, sys_index[_index], argname);
+        } else {
+            printf("Process[%d]: Syscall %s happened, 1st argument=%u\n", pid, sys_index[_index], (unsigned int)rdi);
         }
-        else
-            printf("Process[%d]: Syscall %s happened, 1st argument=%u\n", pid, sys_index[(unsigned int)rax], (unsigned int)rdi);
+
     }
 
     /**
@@ -112,6 +117,7 @@ int introspect_syscall_trace (char *name) {
      * lstar register restores the syscall entry address
      */
     vmi_get_vcpureg(vmi, &virt_lstar, MSR_LSTAR, 0);
+//    virt_lstar = vmi_translate_ksym2v(vmi, "NtDelayExecution");
     phys_lstar = vmi_translate_kv2p(vmi, virt_lstar);
 
     memset(&syscall_enter_event, 0, sizeof(vmi_event_t));
