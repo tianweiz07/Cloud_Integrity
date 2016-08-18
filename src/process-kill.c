@@ -111,7 +111,7 @@ int introspect_process_kill (char *name, char *arg) {
      * We monitor the syscall sys_opctl, which is the most common one
      * Once this syscall happens, then the system will kill the process
      */
-    virt_ioctl = vmi_translate_ksym2v(vmi, "sys_ioctl");
+    virt_ioctl = vmi_translate_ksym2v(vmi, "schedule");
 
     memset(&kill_enter_event, 0, sizeof(vmi_event_t));
 
