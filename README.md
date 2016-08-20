@@ -45,12 +45,14 @@ We support the following mode:
 - process-list:           List the processes
 - module-list:            List the modules
 - syscall-check:          Check if any syscall is hooked
+- idt-check:	          Check if any interrupt handler is hooked
 - network-check:          Check if any network connection is hidden
 - syscall-trace:          Trace the system call made by any processes
 - socketapi-trace:        Trace the socket API made by any processes
-- driverapi-trace:       Trace the kernel device driver API made by any processes
+- driverapi-trace:	  Trace the kernel device driver API made by any processes
 - process-block:          Block a process from launching if its image matches something
 - sleepapi-nop:           NOP the sleep calls to specified processes
+- process-kill:           Kill a process given its pid
 
 
 tools
