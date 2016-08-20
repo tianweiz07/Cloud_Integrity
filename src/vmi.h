@@ -53,6 +53,8 @@ int introspect_module_list(char *name);
 
 int introspect_syscall_check(char *name);
 
+int introspect_idt_check(char *name);
+
 int introspect_network_check(char *name);
 
 int introspect_syscall_trace(char *name);

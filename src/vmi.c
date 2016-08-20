@@ -19,6 +19,7 @@ int main (int argc, char *argv[]) {
                 printf("process-list:		List the processes\n");
                 printf("module-list:		List the modules\n");
                 printf("syscall-check:		Check if any syscall is hooked\n");
+                printf("idt-check:		Check if any interrupt handler is hooked\n");
                 printf("network-check:		Check if any network connection is hidden\n");
                 printf("syscall-trace:		Trace the system call made by any processes\n");
                 printf("socketapi-trace:	Trace the socket API made by any processes\n");
@@ -62,6 +63,8 @@ int main (int argc, char *argv[]) {
         introspect_module_list(vm_name);
     } else if (!strcmp(mode, "syscall-check")) {
         introspect_syscall_check(vm_name);
+    } else if (!strcmp(mode, "idt-check")) {
+        introspect_idt_check(vm_name);
     } else if (!strcmp(mode, "network-check")) {
         introspect_network_check(vm_name);
     } else if (!strcmp(mode, "syscall-trace")) {

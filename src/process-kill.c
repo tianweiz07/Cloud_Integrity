@@ -3,9 +3,9 @@
 vmi_event_t kill_enter_event;
 vmi_event_t kill_step_event;
 
-addr_t virt_ioctl;
+addr_t virt_schedule;
 
-uint32_t ioctl_orig_data;
+uint32_t schedule_orig_data;
 uint32_t leave_kill_orig_data;
 
 int kill_flag = -1;
@@ -69,9 +69,9 @@ event_response_t kill_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 event_response_t kill_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     event->interrupt_event.reinject = 0;
 
-    if (event->interrupt_event.gla == virt_ioctl) {
+    if (event->interrupt_event.gla == virt_schedule) {
         kill_flag = 0;
-        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_ioctl, 0, &ioctl_orig_data)) {
+        if (VMI_FAILURE == vmi_write_32_va(vmi, virt_schedule, 0, &schedule_orig_data)) {
             printf("failed to write memory.\n");
             exit(1);
         }
@@ -111,7 +111,7 @@ int introspect_process_kill (char *name, char *arg) {
      * We monitor the syscall sys_opctl, which is the most common one
      * Once this syscall happens, then the system will kill the process
      */
-    virt_ioctl = vmi_translate_ksym2v(vmi, "schedule");
+    virt_schedule = vmi_translate_ksym2v(vmi, "schedule");
 
     memset(&kill_enter_event, 0, sizeof(vmi_event_t));
 
@@ -130,13 +130,13 @@ int introspect_process_kill (char *name, char *arg) {
         goto exit;
     }
 
-    if (VMI_FAILURE == vmi_read_32_va(vmi, virt_ioctl, 0, &ioctl_orig_data)) {
+    if (VMI_FAILURE == vmi_read_32_va(vmi, virt_schedule, 0, &schedule_orig_data)) {
         printf("failed to read the original data.\n");
         vmi_destroy(vmi);
         return -1;
     }
 
-    if (set_breakpoint(vmi, virt_ioctl, 0) < 0) {
+    if (set_breakpoint(vmi, virt_schedule, 0) < 0) {
         printf("Could not set break points\n");
         goto exit;
     }
@@ -150,7 +150,7 @@ int introspect_process_kill (char *name, char *arg) {
 
 exit:
 
-    if (VMI_FAILURE == vmi_write_32_va(vmi, virt_ioctl, 0, &ioctl_orig_data)) {
+    if (VMI_FAILURE == vmi_write_32_va(vmi, virt_schedule, 0, &schedule_orig_data)) {
         printf("failed to write back the original data.\n");
     }
 
