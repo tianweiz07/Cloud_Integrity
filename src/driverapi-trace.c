@@ -1,30 +1,51 @@
 #include "vmi.h"
 
 /**
- * We are tracking two events: module initialization and device registeration
- * For EPT, we need two vmi_event_t structure
- * For INT3, we only need one
+ * We are tracking two events: module filesystem setup and device registeration
+ * For EPT, we need two vmi_event_t structure: module_enter_event for module filesystem setup; chrdev_enter_event for device registration
+ * For INT3, we only need to use module_enter_event to cover both events
+ * We also use module_setp_event to denote the step event from either module filesystem setup or device registration
  */
 vmi_event_t module_enter_event;
 vmi_event_t chrdev_enter_event;
 vmi_event_t module_step_event;
 
+/**
+ * virtual and physical address for register_chrdev API
+ */
 addr_t virt_register_chrdev;
 addr_t phys_register_chrdev;
 
+/**
+ * virtual and physical address for mod_sysfs_setup API
+ */
 addr_t virt_mod_sysfs_setup;
 addr_t phys_mod_sysfs_setup;
 
+
+/**
+ * original instruction data of register_chrdev or mod_sysfs_setup APIs
+ */
 #ifndef MEM_EVENT
 uint32_t register_chrdev_orig_data;
 uint32_t mod_sysfs_setup_orig_data;
 #endif
 
+
+/**
+ * Denote the event type:
+ * 1: device register
+ * 2: filesystem setup
+ */
 int driver_event_type = 0;
 
+
+/**
+ * callback function for module_setp_event
+ */
 event_response_t driver_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     /**
-     * enable the syscall entry interrupt
+     * enable the module_enter_event or chrdev_enter_event
      */
 #ifdef MEM_EVENT
     if (driver_event_type == 1)
@@ -36,24 +57,28 @@ event_response_t driver_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     if (driver_event_type == 1) {
         if (set_breakpoint(vmi, virt_mod_sysfs_setup, 0) < 0) {
             printf("Could not set break points\n");
+            vmi_destroy(vmi);
             exit(1);
         }
     } else if (driver_event_type == 2) {
         if (set_breakpoint(vmi, virt_register_chrdev, 0) < 0) {
             printf("Could not set break points\n");
+            vmi_destroy(vmi);
             exit(1);
         }
     }
 #endif
 
     /** 
-     * disable the single event
+     * disable the module_setp_event
      */
     vmi_clear_event(vmi, &module_step_event, NULL);
     return 0;
 }
 
-
+/**
+ * callback function for module_event_enter and chrdev_enter_event
+ */
 event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     addr_t event_addr;
 #ifdef MEM_EVENT
@@ -63,7 +88,7 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
 #endif
 
     /**
-     * Case 1: loading kernel modules
+     * Case 1: module filesystem setup
      */
     if (event_addr == virt_mod_sysfs_setup) {
         reg_t rdi, cr3;
@@ -74,6 +99,10 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         char *argname = NULL;
         addr_t offset;
         int size;
+        
+        /**
+         * the module structure offset can be obtained by running findmodule in the tools folder
+         */
         argname = vmi_read_str_va(vmi, (addr_t)rdi+0x18, 0);
         vmi_read_64_va(vmi, (addr_t)rdi+0x158, 0, &offset);
         vmi_read_32_va(vmi, (addr_t)rdi+0x164, 0, &size);
@@ -83,7 +112,7 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     }
 
     /**
-     * Case 2: registering the events
+     * Case 2: device registraction
      */
     else if (event_addr == virt_register_chrdev) {
         reg_t rcx, cr3, rsp;
@@ -93,8 +122,9 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
 
         vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
         char *argname = NULL;
-        argname = vmi_read_str_va(vmi, rcx, 0);
         addr_t inst;
+
+        argname = vmi_read_str_va(vmi, rcx, 0);
         vmi_read_64_va(vmi, rsp, pid, &inst);
         printf("Process [%d] registers a Character Device: %s with return address 0x%" PRIx64 "\n", pid, argname, inst);
         free(argname);
@@ -109,7 +139,7 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     }
 
     /**
-     * disable the syscall entry interrupt
+     * disable the mod_sysfs_setup or chrdev_register event
      */
 #ifdef MEM_EVENT
     vmi_clear_event(vmi, event, NULL);
@@ -119,7 +149,8 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         driver_event_type = 2;
     } else {
         printf("Error in disabling event\n");
-        return -1;
+        vmi_destroy(vmi);
+        exit(1);
     }
 
 #else
@@ -127,18 +158,21 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     if (event_addr == virt_mod_sysfs_setup) {
         if (VMI_FAILURE == vmi_write_32_va(vmi, virt_mod_sysfs_setup, 0, &mod_sysfs_setup_orig_data)) {
             printf("failed to write memory.\n");
+            vmi_destroy(vmi);
             exit(1);
         }
         driver_event_type = 1;
     } else if (event_addr == virt_register_chrdev) {
         if (VMI_FAILURE == vmi_write_32_va(vmi, virt_register_chrdev, 0, &register_chrdev_orig_data)) {
             printf("failed to write memory.\n");
+            vmi_destroy(vmi);
             exit(1);
         }
         driver_event_type = 2;
     } else {
         printf("Error in disabling event\n");
-        return -1;
+        vmi_destroy(vmi);
+        exit(1);
     }
 #endif
 
@@ -161,6 +195,9 @@ int introspect_driverapi_trace (char *name) {
     sigaction(SIGINT,  &act, NULL);
     sigaction(SIGALRM, &act, NULL);
 
+    /**
+     * Initialize the vmi instance
+     */
     vmi_instance_t vmi = NULL;
     if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
         printf("Failed to init LibVMI library.\n");
@@ -233,7 +270,7 @@ int introspect_driverapi_trace (char *name) {
 
 #ifndef MEM_EVENT
     /**
-     * store the original data for syscall entry function
+     * store the original data of mod_sysfs_setup function
      */
     if (VMI_FAILURE == vmi_read_32_va(vmi, virt_register_chrdev, 0, &register_chrdev_orig_data)) {
         printf("failed to read the original data.\n");
@@ -248,7 +285,7 @@ int introspect_driverapi_trace (char *name) {
     }
 
     /**
-     * insert breakpoint into the syscall entry function
+     * insert breakpoint into the hooked functions
      */
     if (set_breakpoint(vmi, virt_register_chrdev, 0) < 0) {
         printf("Could not set break points\n");
@@ -261,6 +298,10 @@ int introspect_driverapi_trace (char *name) {
     }
 #endif
 
+
+    /**
+     * Main loop to capture events
+     */
     while(!interrupted){
         if (vmi_events_listen(vmi, 1000) != VMI_SUCCESS) {
             printf("Error waiting for events, quitting...\n");
@@ -268,8 +309,8 @@ int introspect_driverapi_trace (char *name) {
         }
     }
 
-exit:
 
+exit:
 #ifndef MEM_EVENT
     /**
      * write back the original data

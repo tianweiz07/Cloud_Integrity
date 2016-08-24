@@ -1,42 +1,57 @@
 #include "vmi.h"
 
+/**
+ * We are tracking two events: accept API and connect API
+ * For EPT, we need two vmi_event_t structure: accept_enter_event for accept API; connect_enter_event for connect API
+ * For INT3, we only need to use accept_enter_event to cover both accept and connect API
+ * We also use accept_setp_event to denote the step event from accept or connect API
+ */
 vmi_event_t accept_enter_event;
-vmi_event_t accept_step_event;
 vmi_event_t connect_enter_event;
+vmi_event_t accept_step_event;
 
+/**
+ * virtual and physical address for sys_accept, sys_connect, and return address from sys_accept
+ */
 addr_t virt_sys_accept;
 addr_t phys_sys_accept;
-
-addr_t virt_leave_sys_accept = 0;
-addr_t phys_leave_sys_accept = 0;
 
 addr_t virt_sys_connect;
 addr_t phys_sys_connect;
 
+addr_t virt_leave_sys_accept = 0;
+addr_t phys_leave_sys_accept = 0;
+
 #ifdef MEM_EVENT
 /**
- * This event is for mem event
+ * This event is for mem event: when returning from sys_accept
  * INT does not need to specify new events
  */
 vmi_event_t accept_leave_event;
 #else
+/**
+ * original instruction data of sys_accept, sys_connect or return instruction from sys_accept
+ */
 uint32_t sys_accept_orig_data;
 uint32_t sys_connect_orig_data;
 uint32_t leave_sys_accept_orig_data;
 #endif
 
+/**
+ * Denote the event type:
+ * 1: entering sys_accept
+ * 2: entering sys_connect
+ * 3: return from sys_accept
+ */
 int socket_event_type = 0;
 
-/** 
- * socket structure offset 
+
+/**
+ * callback function for accept_step_event
  */
-
-unsigned long port_offset;
-unsigned long ip_offset;
-
 event_response_t socket_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     /**
-     * enable the syscall entry interrupt
+     * enable the accept_enter_event, connect_enter_event or accept_leave_event
      */
 #ifdef MEM_EVENT
     if (socket_event_type == 1)
@@ -50,23 +65,28 @@ event_response_t socket_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
     if (socket_event_type == 2) {
         if (set_breakpoint(vmi, virt_sys_connect, 0) < 0) {
             printf("Could not set break points\n");
+            vmi_destroy(vmi);
             exit(1);
         }
     } else if (socket_event_type == 3) {
         if (set_breakpoint(vmi, virt_leave_sys_accept, 0) < 0) {
             printf("Could not set break points\n");
+            vmi_destroy(vmi);
             exit(1);
         }
     } 
 #endif
 
     /** 
-     * disable the single event
+     * disable the accept_setp_event
      */
     vmi_clear_event(vmi, &accept_step_event, NULL);
     return 0;
 }
 
+/**
+ * callback function for accept_enter_event, connect_enter_event and accept_leave_event
+ */
 event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     addr_t event_addr;
 #ifdef MEM_EVENT
@@ -120,13 +140,15 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         if ((virt_leave_sys_accept >> 12) != (virt_sys_accept >> 12) && (virt_leave_sys_accept >> 12) != (virt_sys_connect >> 12)) {
             if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
                 printf("Could not install socket handler3.\n");
-                return -1;
+                vmi_destroy(vmi);
+                exit(1);
             }   
         }
 #else
         if (VMI_FAILURE == vmi_read_32_va(vmi, virt_leave_sys_accept, 0, &leave_sys_accept_orig_data)) {
             printf("failed to read the original data.\n");
-            return -1;
+            vmi_destroy(vmi);
+            exit(1);
         }
 
         /**
@@ -134,7 +156,8 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
          */
         if (set_breakpoint(vmi, virt_leave_sys_accept, 0) < 0) {
             printf("Could not set break points\n");
-            return -1;
+            vmi_destroy(vmi);
+            exit(1);
         }
 #endif       
     }
@@ -181,8 +204,11 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         if (rax > 0) {
             uint16_t port;
             uint32_t ip_addr;
-            vmi_read_16_va(vmi, rax + port_offset, 0, &port);
-            vmi_read_32_va(vmi, rax + ip_offset, 0, &ip_addr);
+           /**
+            * socket struct offsets can be obtained by running findsocket in the tools folder
+            */
+            vmi_read_16_va(vmi, rax + 0x280, 0, &port);
+            vmi_read_32_va(vmi, rax + 0x278, 0, &ip_addr);
             printf("Accept connection from %d.%d.%d.%d:%d\n", ip_addr&0xff, (ip_addr>>8)&0xff, (ip_addr>>16)&0xff, (ip_addr>>24)&0xff, port);
         }
     }
@@ -210,24 +236,28 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     if (event_addr == virt_sys_accept) {
         if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_accept, 0, &sys_accept_orig_data)) {
             printf("failed to write memory.\n");
+            vmi_destroy(vmi);
             exit(1);
         }
         socket_event_type = 1;
     } else if (event_addr == virt_sys_connect) {
         if (VMI_FAILURE == vmi_write_32_va(vmi, virt_sys_connect, 0, &sys_connect_orig_data)) {
             printf("failed to write memory.\n");
+            vmi_destroy(vmi);
             exit(1);
         }
         socket_event_type = 2;
     } else if (event_addr == virt_leave_sys_accept) {
         if (VMI_FAILURE == vmi_write_32_va(vmi, virt_leave_sys_accept, 0, &leave_sys_accept_orig_data)) {
             printf("failed to write memory.\n");
+            vmi_destroy(vmi);
             exit(1);
         }
         socket_event_type = 3;
     } else {
         printf("Error in disabling event\n");
-        return -1;
+        vmi_destroy(vmi);
+        exit(1);
     }
 #endif
 
@@ -250,6 +280,9 @@ int introspect_socketapi_trace (char *name) {
     sigaction(SIGINT,  &act, NULL);
     sigaction(SIGALRM, &act, NULL);
 
+    /**
+     * Initialize the vmi instance
+     */
     vmi_instance_t vmi = NULL;
     if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
         printf("Failed to init LibVMI library.\n");
@@ -257,14 +290,9 @@ int introspect_socketapi_trace (char *name) {
         return 1;
     }
 
-    /**
-     * socket struct offsets can be obtained by running findsocket
-     */
-    port_offset = 0x280;
-    ip_offset = 0x278;
 
     /**
-     * get the address of sys_socket from the sysmap
+     * get the address of inet_csk_accept and inet_stream_connect from the sysmap
      */
     virt_sys_accept = vmi_translate_ksym2v(vmi, "inet_csk_accept");
     phys_sys_accept = vmi_translate_kv2p(vmi, virt_sys_accept);
@@ -361,7 +389,6 @@ int introspect_socketapi_trace (char *name) {
 
 
 exit:
-
 #ifndef MEM_EVENT
     /**
      * write back the original data
