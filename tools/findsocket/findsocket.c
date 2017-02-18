@@ -53,7 +53,7 @@ static int my_init_module(void) {
     nextOffset = (unsigned long) (&(node->next)) - (unsigned long)(&(*node));
 
 
-    uhlistOffset = (unsigned long) (&(udp_table.hash[0])) - (unsigned long) (&(udp_table));
+    uhlistOffset = (unsigned long) (&(udp_table.hash)) - (unsigned long) (&(udp_table));
     uhlistLength = (unsigned long)sizeof(struct udp_hslot);
 
     ufirstOffset = (unsigned long) (&(udp_table.hash[0].head.first)) - (unsigned long) (&(udp_table.hash[0]));
