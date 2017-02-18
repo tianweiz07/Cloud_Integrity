@@ -16,6 +16,9 @@ static int my_init_module(void) {
     unsigned long portOffset;
     unsigned long addrOffset;
 
+    unsigned long hlistOffset1;
+    unsigned long hlistOffset2;
+
     struct sock *sk;
     struct inet_sock *inet;
 
@@ -27,8 +30,15 @@ static int my_init_module(void) {
     portOffset = (unsigned long) (&(inet->inet_dport)) - (unsigned long) (sk);
     addrOffset = (unsigned long) (&(inet->inet_daddr)) - (unsigned long) (sk);
 
+    hlistOffset1 = (unsigned long) (&(tcp_hashinfo.listening_hash[0])) - (unsigned long)(&(tcp_hashinfo));
+    hlistOffset2 = (unsigned long) (&(tcp_hashinfo.listening_hash[1])) - (unsigned long)(&(tcp_hashinfo.listening_hash[0]));
+
     printk("portOffset = 0x%x\n", (unsigned int)portOffset);
     printk("addrOffset = 0x%x\n", (unsigned int)addrOffset);
+
+    printk("hlistOffset1 = 0x%x\n", (unsigned int)hlistOffset1);
+    printk("hlistOffset2 = 0x%x\n", (unsigned int)hlistOffset2);
+
     return 0;
 }
 
