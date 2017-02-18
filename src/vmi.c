@@ -70,6 +70,8 @@ int main (int argc, char *argv[]) {
         introspect_idt_check(vm_name);
     } else if (!strcmp(mode, "network-check")) {
         introspect_network_check(vm_name);
+    } else if (!strcmp(mode, "procfs-check")) {
+        introspect_procfs_check(vm_name);
     } else if (!strcmp(mode, "syscall-trace")) {
         introspect_syscall_trace(vm_name);
     } else if (!strcmp(mode, "socketapi-trace")) {

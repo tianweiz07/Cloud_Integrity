@@ -59,6 +59,8 @@ int introspect_idt_check(char *name);
 
 int introspect_network_check(char *name);
 
+int introspect_procfs_check(char *name);
+
 int introspect_syscall_trace(char *name);
 
 int introspect_socketapi_trace(char *name);
