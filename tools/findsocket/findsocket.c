@@ -13,31 +13,48 @@ static void my_cleanup_module(void);
 
 static int my_init_module(void) {
 
-    unsigned long portOffset;
-    unsigned long addrOffset;
+    unsigned long dportOffset;
+    unsigned long daddrOffset;
+    unsigned long sportOffset;
 
-    unsigned long hlistOffset1;
-    unsigned long hlistOffset2;
+    unsigned long hlistOffset;
+    unsigned long hlistLength;
+
+    unsigned long firstOffset;
+    unsigned long nextOffset;
 
     struct sock *sk;
     struct inet_sock *inet;
+
+    struct hlist_nulls_node *node;
 
     printk(KERN_ALERT "Module %s loaded.\n\n", MYMODNAME);
 
     sk = kmalloc(sizeof(struct sock), GFP_KERNEL);
     inet = inet_sk(sk);
 
-    portOffset = (unsigned long) (&(inet->inet_dport)) - (unsigned long) (sk);
-    addrOffset = (unsigned long) (&(inet->inet_daddr)) - (unsigned long) (sk);
+    dportOffset = (unsigned long) (&(inet->inet_dport)) - (unsigned long) (sk);
+    daddrOffset = (unsigned long) (&(inet->inet_daddr)) - (unsigned long) (sk);
+    sportOffset = (unsigned long) (&(inet->inet_sport)) - (unsigned long) (sk);
 
-    hlistOffset1 = (unsigned long) (&(tcp_hashinfo.listening_hash[0])) - (unsigned long)(&(tcp_hashinfo));
-    hlistOffset2 = (unsigned long) (&(tcp_hashinfo.listening_hash[1])) - (unsigned long)(&(tcp_hashinfo.listening_hash[0]));
+    hlistOffset = (unsigned long) (&(tcp_hashinfo.listening_hash[0])) - (unsigned long)(&(tcp_hashinfo));
+    hlistLength = (unsigned long)sizeof(struct inet_listen_hashbucket);
 
-    printk("portOffset = 0x%x\n", (unsigned int)portOffset);
-    printk("addrOffset = 0x%x\n", (unsigned int)addrOffset);
 
-    printk("hlistOffset1 = 0x%x\n", (unsigned int)hlistOffset1);
-    printk("hlistOffset2 = 0x%x\n", (unsigned int)hlistOffset2);
+    firstOffset = (unsigned long) (&(tcp_hashinfo.listening_hash[0].head.first)) - (unsigned long) (&(tcp_hashinfo.listening_hash[0]));
+
+    node = tcp_hashinfo.listening_hash[0].head.first;
+
+    nextOffset = (unsigned long) (&(node->next)) - (unsigned long)(&(*node));
+
+    printk("dportOffset = 0x%x\n", (unsigned int)dportOffset);
+    printk("daddrOffset = 0x%x\n", (unsigned int)daddrOffset);
+    printk("sportOffset = 0x%x\n", (unsigned int)sportOffset);
+
+    printk("hlistOffset = 0x%x\n", (unsigned int)hlistOffset);
+    printk("hlistLength = 0x%x\n", (unsigned int)hlistLength);
+    printk("firstOffset = 0x%x\n", (unsigned int)firstOffset);
+    printk("nextOffset = 0x%x\n", (unsigned int)nextOffset);
 
     return 0;
 }
