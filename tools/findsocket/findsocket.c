@@ -4,7 +4,7 @@
 #include <linux/sched.h>
 #include <linux/kallsyms.h>
 #include <net/tcp.h>
-
+#include <net/udp.h>
 
 #define MYMODNAME "FindSocket "
 
@@ -20,8 +20,13 @@ static int my_init_module(void) {
     unsigned long hlistOffset;
     unsigned long hlistLength;
 
+    unsigned long uhlistOffset;
+    unsigned long uhlistLength;
+
     unsigned long firstOffset;
     unsigned long nextOffset;
+
+    unsigned long ufirstOffset;
 
     struct sock *sk;
     struct inet_sock *inet;
@@ -47,6 +52,15 @@ static int my_init_module(void) {
 
     nextOffset = (unsigned long) (&(node->next)) - (unsigned long)(&(*node));
 
+
+    uhlistOffset = (unsigned long) (&(udp_table.hash[0])) - (unsigned long) (&(udp_table));
+    uhlistLength = (unsigned long)sizeof(struct udp_hslot);
+
+    ufirstOffset = (unsigned long) (&(udp_table.hash[0].head.first)) - (unsigned long) (&(udp_table.hash[0]));
+
+
+
+
     printk("dportOffset = 0x%x\n", (unsigned int)dportOffset);
     printk("daddrOffset = 0x%x\n", (unsigned int)daddrOffset);
     printk("sportOffset = 0x%x\n", (unsigned int)sportOffset);
@@ -55,6 +69,10 @@ static int my_init_module(void) {
     printk("hlistLength = 0x%x\n", (unsigned int)hlistLength);
     printk("firstOffset = 0x%x\n", (unsigned int)firstOffset);
     printk("nextOffset = 0x%x\n", (unsigned int)nextOffset);
+
+    printk("uhlistOffset = 0x%x\n", (unsigned int)uhlistOffset);
+    printk("uhlistLength = 0x%x\n", (unsigned int)uhlistLength);
+    printk("ufirstOffset = 0x%x\n", (unsigned int)ufirstOffset);
 
     return 0;
 }
