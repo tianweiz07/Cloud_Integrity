@@ -104,7 +104,8 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &rsi, RSI, event->vcpu_id);
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
         /**
          * First time, the leave_sys_accept has not been set yet.
@@ -115,7 +116,7 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_read_64_va(vmi, rbp, pid, &rip);
 
         virt_leave_sys_accept = rip;
-        phys_leave_sys_accept = vmi_translate_kv2p(vmi, virt_leave_sys_accept);
+        vmi_translate_kv2p(vmi, virt_leave_sys_accept, &phys_leave_sys_accept);
 
         /**
          * Set the event notification when sys_accept finishes.
@@ -129,13 +130,9 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
          */
 
         memset(&accept_leave_event, 0, sizeof(vmi_event_t));
-           
-        accept_leave_event.type = VMI_EVENT_MEMORY;
-        accept_leave_event.mem_event.physical_address = phys_leave_sys_accept;
-        accept_leave_event.mem_event.npages = 1;
-        accept_leave_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-        accept_leave_event.mem_event.in_access = VMI_MEMACCESS_X;
-        accept_leave_event.callback = socket_enter_cb;
+        
+        uint64_t gfn = phys_leave_sys_accept >> 12;
+        SETUP_MEM_EVENT(&accept_leave_event, gfn, VMI_MEMACCESS_X, &socket_enter_cb, false);
 
         if ((virt_leave_sys_accept >> 12) != (virt_sys_accept >> 12) && (virt_leave_sys_accept >> 12) != (virt_sys_connect >> 12)) {
             if(vmi_register_event(vmi, &accept_leave_event) == VMI_FAILURE) {
@@ -170,7 +167,8 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsi, RSI, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rdx, RDX, event->vcpu_id);
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
         /**
          * If this is called by the socket api, then the length of the parameter should be 16.
@@ -195,7 +193,8 @@ event_response_t socket_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         reg_t cr3, rax;
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rax, RAX, event->vcpu_id);
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
         /**
          * must check the pid is valid, and the return address is true.
@@ -284,21 +283,43 @@ int introspect_socketapi_trace (char *name) {
      * Initialize the vmi instance
      */
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
         vmi_destroy(vmi);
         return 1;
     }
 
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
 
     /**
      * get the address of inet_csk_accept and inet_stream_connect from the sysmap
      */
-    virt_sys_accept = vmi_translate_ksym2v(vmi, "inet_csk_accept");
-    phys_sys_accept = vmi_translate_kv2p(vmi, virt_sys_accept);
+    vmi_translate_ksym2v(vmi, "inet_csk_accept", &virt_sys_accept);
+    vmi_translate_kv2p(vmi, virt_sys_accept, &phys_sys_accept);
 
-    virt_sys_connect = vmi_translate_ksym2v(vmi, "inet_stream_connect");
-    phys_sys_connect = vmi_translate_kv2p(vmi, virt_sys_connect);
+    vmi_translate_ksym2v(vmi, "inet_stream_connect", &virt_sys_connect);
+    vmi_translate_kv2p(vmi, virt_sys_connect, &phys_sys_connect);
 
 
     memset(&accept_enter_event, 0, sizeof(vmi_event_t));
@@ -307,19 +328,12 @@ int introspect_socketapi_trace (char *name) {
     /**
      * iniialize the memory event for EPT violation.
      */
-    accept_enter_event.type = VMI_EVENT_MEMORY;
-    accept_enter_event.mem_event.physical_address = phys_sys_accept;
-    accept_enter_event.mem_event.npages = 1;
-    accept_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    accept_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    accept_enter_event.callback = socket_enter_cb;
+    uint64_t gfn = phys_sys_accept >> 12;
+    SETUP_MEM_EVENT(&accept_enter_event, gfn, VMI_MEMACCESS_X, &socket_enter_cb, false);
 
-    connect_enter_event.type = VMI_EVENT_MEMORY;
-    connect_enter_event.mem_event.physical_address = phys_sys_connect;
-    connect_enter_event.mem_event.npages = 1;
-    connect_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    connect_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    connect_enter_event.callback = socket_enter_cb;
+    gfn = phys_sys_connect >> 12;
+    SETUP_MEM_EVENT(&connect_enter_event, gfn, VMI_MEMACCESS_X, &socket_enter_cb, false);
+
 #else
     /**
      * iniialize the interrupt event for INT3.
