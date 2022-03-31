@@ -63,7 +63,9 @@ void save_context(vmi_instance_t vmi, vmi_event_t *event) {
     /* Save the user data*/
     reg_t cr3;
     vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-    vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+    
+    vmi_pid_t pid = -1;
+    vmi_dtb_to_pid(vmi, cr3, &pid);
 
     int i = 0;
     for (i=0; i<100; i++) {
@@ -85,13 +87,14 @@ void restore_context(vmi_instance_t vmi, vmi_event_t *event) {
     /* Restore the user data */
     reg_t cr3;
     vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-    vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+    
+    vmi_pid_t pid = -1;
+    vmi_dtb_to_pid(vmi, cr3, &pid);
 
     int i;
     for (i=0; i<100; i++) {
         vmi_write_8_va(vmi, BASE_ADDR+i, pid, &(str_orig[i]));
     }
-
 }
 
 
@@ -201,7 +204,8 @@ event_response_t syscall_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
 
         reg_t cr3;
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
 
         /* Insert new data into user memory space */
@@ -231,7 +235,9 @@ event_response_t syscall_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
         vmi_set_vcpureg(vmi, rsp_orig-8, RSP, event->vcpu_id);
         vmi_write_64_va(vmi, rsp_orig-8, 0, &rip_orig);
 
-        vmi_set_vcpureg(vmi, vmi_translate_ksym2v(vmi, "call_usermodehelper"), RIP, event->vcpu_id);
+        addr_t addr;
+        vmi_translate_ksym2v(vmi, "call_usermodehelper", &addr);
+        vmi_set_vcpureg(vmi, addr, RIP, event->vcpu_id);
 
         vmi_read_32_va(vmi, rip_orig, 0, &syscall1_orig_data);
         set_breakpoint(vmi, rip_orig, 0);
@@ -262,7 +268,8 @@ event_response_t syscall_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
 
         reg_t cr3;
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
         restore_context(vmi, event);
     }
@@ -285,13 +292,40 @@ int main (int argc, char **argv) {
     sigaction(SIGALRM, &act, NULL);
 
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
         vmi_destroy(vmi);
         return 1;
     }
 
-    virt_lstar = vmi_translate_ksym2v(vmi, "sys_ioctl");
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
+
+
+    printf("LibVMI init succeeded!\n");
+    memset(&syscall_enter_event, 0, sizeof(vmi_event_t));
+
+    vmi_translate_ksym2v(vmi, "sys_ioctl", &virt_lstar);
 
     memset(&syscall_enter_event, 0, sizeof(vmi_event_t));
 
