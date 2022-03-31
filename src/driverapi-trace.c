@@ -95,7 +95,7 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
-        vmi_pid_t pid;
+        vmi_pid_t pid = -1;
         vmi_dtb_to_pid(vmi, cr3, &pid);
         char *argname = NULL;
         addr_t offset;
@@ -121,7 +121,7 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsp, RSP, event->vcpu_id);
 
-        vmi_pid_t pid;
+        vmi_pid_t pid = -1;
         vmi_dtb_to_pid(vmi, cr3, &pid);
         char *argname = NULL;
         addr_t inst;
