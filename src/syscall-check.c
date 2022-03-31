@@ -1,7 +1,6 @@
 #include "vmi.h"
 
 int introspect_syscall_check(char *name) {
-    vmi_instance_t vmi;
     addr_t sys_call_table_addr, sys_call_addr, kernel_start, kernel_end;
     int count_syscall = 0;
 
@@ -22,7 +21,7 @@ int introspect_syscall_check(char *name) {
     fclose(_file);
 
 
-vmi_instance_t vmi = NULL;
+    vmi_instance_t vmi = NULL;
     vmi_init_data_t *init_data = NULL;
     uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
     void *input = NULL, *config = NULL;

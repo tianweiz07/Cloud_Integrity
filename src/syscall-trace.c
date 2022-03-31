@@ -46,7 +46,9 @@ event_response_t syscall_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
         uint16_t _index = (uint16_t)rax;
         if (_index >= num_sys) {
@@ -78,8 +80,9 @@ event_response_t syscall_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
     /**
      * set the single event to execute one instruction
      */
+    vmi_step_event(vmi, event, event->vcpu_id, 1, NULL);
     vmi_register_event(vmi, &syscall_step_event);
-    return 0;
+    return VMI_EVENT_RESPONSE_NONE;
 }
 
 int introspect_syscall_trace (char *name) {
@@ -97,7 +100,10 @@ int introspect_syscall_trace (char *name) {
     char _name[256];
     int _index[256];
 
-    FILE *_file = fopen("syscall_index", "r");
+    FILE *_file = fopen("data/syscall_index.linux", "r");
+    if (_file == NULL)
+        printf("Failed to read syscall file\n");
+
     while(fgets(_line, sizeof(_line), _file) != NULL){
         sscanf(_line, "%d\t%s", _index, _name);
         sys_index = realloc(sys_index, sizeof(char*) * ++num_sys);
@@ -107,30 +113,83 @@ int introspect_syscall_trace (char *name) {
     fclose(_file);
 
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+    vmi_mode_t mode;
+    
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
         vmi_destroy(vmi);
         return 1;
     }
 
-    /**
-     * lstar register restores the syscall entry address
-     */
-    vmi_get_vcpureg(vmi, &virt_lstar, MSR_LSTAR, 0);
-    phys_lstar = vmi_translate_kv2p(vmi, virt_lstar);
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
+
+
+    printf("LibVMI init succeeded!\n");
 
     memset(&syscall_enter_event, 0, sizeof(vmi_event_t));
 
 #ifdef MEM_EVENT
-    /**
-     * iniialize the memory event for EPT violation.
-     */
-    syscall_enter_event.type = VMI_EVENT_MEMORY;
-    syscall_enter_event.mem_event.physical_address = phys_lstar;
-    syscall_enter_event.mem_event.npages = 1;
-    syscall_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    syscall_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    syscall_enter_event.callback = syscall_enter_cb;
+    if (VMI_FAILURE ==  vmi_pause_vm(vmi)) {
+        fprintf(stderr, "Failed to pause vm\n");
+        return 1;
+    }
+
+    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &virt_lstar, MSR_LSTAR, 0)) {
+        fprintf(stderr, "Failed to get current RIP\n");
+        return 1;
+    }
+
+    uint64_t cr3;
+    if (VMI_FAILURE == vmi_get_vcpureg(vmi, &cr3, CR3, 0)) {
+        fprintf(stderr, "Failed to get current CR3\n");
+        return 1;
+    }
+    uint64_t dtb = cr3 & ~(0xfff);
+
+    uint64_t paddr;
+    if (VMI_FAILURE == vmi_pagetable_lookup(vmi, dtb, virt_lstar, &paddr)) {
+        fprintf(stderr, "Failed to find current paddr\n");
+        return 1;
+    }
+
+    uint64_t gfn = paddr >> 12;
+
+    SETUP_MEM_EVENT(&syscall_enter_event, gfn, VMI_MEMACCESS_X, syscall_enter_cb, false);
+
+
+    printf("Setting X memory event at LSTAR 0x%"PRIx64", GPA 0x%"PRIx64", GFN 0x%"PRIx64"\n",
+           virt_lstar, paddr, gfn);
+
+    if (VMI_FAILURE == vmi_register_event(vmi, &syscall_enter_event)) {
+        fprintf(stderr, "Failed to register mem event\n");
+        return 1;
+    }
+
+    // resuming
+    if (VMI_FAILURE == vmi_resume_vm(vmi)) {
+        fprintf(stderr, "Failed to resume vm\n");
+        return 1;
+    }
+
 #else
     /**
      * iniialize the interrupt event for INT3.
@@ -144,18 +203,7 @@ int introspect_syscall_trace (char *name) {
      * iniialize the single step event.
      */
     memset(&syscall_step_event, 0, sizeof(vmi_event_t));
-    syscall_step_event.type = VMI_EVENT_SINGLESTEP;
-    syscall_step_event.callback = syscall_step_cb;
-    syscall_step_event.ss_event.enable = 1;
-    SET_VCPU_SINGLESTEP(syscall_step_event.ss_event, 0);
-
-    /**
-     * register the event.
-     */
-    if(vmi_register_event(vmi, &syscall_enter_event) == VMI_FAILURE) {
-        printf("Could not install enter syscall handler.\n");
-        goto exit;
-    }
+    SETUP_SINGLESTEP_EVENT(&syscall_step_event, 1, syscall_step_cb, 0);
 
 #ifndef MEM_EVENT
     /**
@@ -193,7 +241,7 @@ exit:
         printf("failed to write back the original data.\n");
     }
 #endif
-
+    vmi_clear_event(vmi, &syscall_enter_event, NULL);
     vmi_destroy(vmi);
     return 0;
 }
