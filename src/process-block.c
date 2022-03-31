@@ -97,7 +97,10 @@ int find_absolute_path(vmi_instance_t vmi, vmi_pid_t pid, char *executable, char
         addr_t list_head = 0, next_list_entry = 0, current_process = 0;
         vmi_pid_t pid1 = 0;
 
-        list_head = vmi_translate_ksym2v(vmi, "init_task") + tasks_offset;
+        addr_t addr_init_task;
+        vmi_translate_ksym2v(vmi, "init_task", &addr_init_task);
+
+        list_head = addr_init_task + tasks_offset;
         next_list_entry = list_head;
 
         do {
@@ -179,7 +182,9 @@ event_response_t execve_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsp, RSP, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
+
         char *executable = NULL;
         char exec_path[256] = "";
 
@@ -272,12 +277,34 @@ int introspect_process_block (char *name) {
     sigaction(SIGALRM, &act, NULL);
 
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
         vmi_destroy(vmi);
         return 1;
     }
 
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
     /**
      * get the list of process signatures that to block their launch, from the file blacklist.txt.
      */
@@ -308,9 +335,9 @@ int introspect_process_block (char *name) {
     /**
      * get the offsets from the libvmi config file
      */
-    tasks_offset = vmi_get_offset(vmi, "linux_tasks");
-    name_offset = vmi_get_offset(vmi, "linux_name");
-    pid_offset = vmi_get_offset(vmi, "linux_pid");
+    vmi_get_offset(vmi, "linux_tasks", &tasks_offset);
+    vmi_get_offset(vmi, "linux_name", &name_offset);
+    vmi_get_offset(vmi, "linux_pid", &pid_offset);
    
     /**
      * file struct offsets can be obtained by running findpwd 
@@ -323,8 +350,8 @@ int introspect_process_block (char *name) {
     /**
      * get the address of function do_execve
      */
-    virt_do_execve = vmi_translate_ksym2v(vmi, "do_execve");
-    phys_do_execve = vmi_translate_kv2p(vmi, virt_do_execve);
+    vmi_translate_ksym2v(vmi, "do_execve", &virt_do_execve);
+    vmi_translate_kv2p(vmi, virt_do_execve, &phys_do_execve);
 
     memset(&execve_enter_event, 0, sizeof(vmi_event_t));
 
@@ -332,12 +359,8 @@ int introspect_process_block (char *name) {
     /**
      * iniialize the memory event for EPT violation.
      */
-    execve_enter_event.type = VMI_EVENT_MEMORY;
-    execve_enter_event.mem_event.physical_address = phys_do_execve;
-    execve_enter_event.mem_event.npages = 1;
-    execve_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    execve_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    execve_enter_event.callback = execve_enter_cb;
+    uint64_t gfn = phys_do_execve >> 12;
+    SETUP_MEM_EVENT(&execve_enter_event, gfn, VMI_MEMACCESS_X, &execve_enter_cb, false);
 #else
     /**
      * iniialize the interrupt event for INT3.
