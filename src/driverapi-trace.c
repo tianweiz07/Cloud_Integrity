@@ -95,7 +95,8 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &rdi, RDI, event->vcpu_id);
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
         char *argname = NULL;
         addr_t offset;
         int size;
@@ -120,7 +121,8 @@ event_response_t driver_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsp, RSP, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
         char *argname = NULL;
         addr_t inst;
 
@@ -199,21 +201,47 @@ int introspect_driverapi_trace (char *name) {
      * Initialize the vmi instance
      */
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
         vmi_destroy(vmi);
         return 1;
     }
+
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
+
+
+    printf("LibVMI init succeeded!\n");
 
     /**
      * get the address of register_chrdev and mod_sysfs_setup from the sysmap
      * mod_sysfs_setup is the key function called by init_module
      * register_chrdev is the key function when registering char devices.
      */
-    virt_register_chrdev = vmi_translate_ksym2v(vmi, "__register_chrdev");
-    phys_register_chrdev = vmi_translate_kv2p(vmi, virt_register_chrdev);
-    virt_mod_sysfs_setup = vmi_translate_ksym2v(vmi, "mod_sysfs_setup");
-    phys_mod_sysfs_setup = vmi_translate_kv2p(vmi, virt_mod_sysfs_setup);
+    vmi_translate_ksym2v(vmi, "__register_chrdev", &virt_register_chrdev);
+    vmi_translate_kv2p(vmi, virt_register_chrdev, &phys_register_chrdev);
+    vmi_translate_ksym2v(vmi, "mod_sysfs_setup", &virt_mod_sysfs_setup);
+    vmi_translate_kv2p(vmi, virt_mod_sysfs_setup, &phys_mod_sysfs_setup);
 
     memset(&chrdev_enter_event, 0, sizeof(vmi_event_t));
     memset(&module_enter_event, 0, sizeof(vmi_event_t));
@@ -222,19 +250,11 @@ int introspect_driverapi_trace (char *name) {
     /**
      * iniialize the memory event for EPT violation.
      */
-    chrdev_enter_event.type = VMI_EVENT_MEMORY;
-    chrdev_enter_event.mem_event.physical_address = phys_register_chrdev;
-    chrdev_enter_event.mem_event.npages = 1;
-    chrdev_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    chrdev_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    chrdev_enter_event.callback = driver_enter_cb;
+    uint64_t gfn = phys_register_chrdev >> 12;
+    SETUP_MEM_EVENT(&chrdev_enter_event, gfn, VMI_MEMACCESS_X, &driver_enter_cb, false);
 
-    module_enter_event.type = VMI_EVENT_MEMORY;
-    module_enter_event.mem_event.physical_address = phys_mod_sysfs_setup;
-    module_enter_event.mem_event.npages = 1;
-    module_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    module_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    module_enter_event.callback = driver_enter_cb;
+    gfn = phys_mod_sysfs_setup >> 12;
+    SETUP_MEM_EVENT(&module_enter_event, gfn, VMI_MEMACCESS_X, &driver_enter_cb, false);
 #else
     /**
      * iniialize the interrupt event for INT3.
