@@ -52,7 +52,10 @@ event_response_t kill_step_cb(vmi_instance_t vmi, vmi_event_t *event) {
         vmi_set_vcpureg(vmi, rsp_orig-8, RSP, event->vcpu_id);
         vmi_write_64_va(vmi, rsp_orig-8, 0, &rip_orig);
 
-        vmi_set_vcpureg(vmi, vmi_translate_ksym2v(vmi, "sys_kill"), RIP, event->vcpu_id);
+        addr_t sys_kill_addr;
+        vmi_translate_ksym2v(vmi, "sys_kill", &sys_kill_addr);
+
+        vmi_set_vcpureg(vmi, sys_kill_addr, RIP, event->vcpu_id);
 
         vmi_read_32_va(vmi, rip_orig, 0, &leave_kill_orig_data);
         set_breakpoint(vmi, rip_orig, 0);
@@ -101,8 +104,31 @@ int introspect_process_kill (char *name, char *arg) {
     sigaction(SIGALRM, &act, NULL);
 
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
+
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
         vmi_destroy(vmi);
         return 1;
     }
@@ -111,7 +137,7 @@ int introspect_process_kill (char *name, char *arg) {
      * We monitor the syscall sys_opctl, which is the most common one
      * Once this syscall happens, then the system will kill the process
      */
-    virt_schedule = vmi_translate_ksym2v(vmi, "schedule");
+    vmi_translate_ksym2v(vmi, "schedule", &virt_schedule);
 
     memset(&kill_enter_event, 0, sizeof(vmi_event_t));
 
