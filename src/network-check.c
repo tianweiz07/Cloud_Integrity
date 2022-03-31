@@ -2,12 +2,38 @@
 
 int introspect_network_check(char *name)
 {
-    vmi_instance_t vmi;
+    vmi_instance_t vmi = NULL;
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
 
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE, name) == VMI_FAILURE) {
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
         return 1;
     }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
+
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
+
+
+    printf("LibVMI init succeeded!\n");
 
     addr_t tcp_hashinfo_addr;
     addr_t node_addr;
@@ -25,8 +51,8 @@ int introspect_network_check(char *name)
     unsigned long uhlistLength = 0x10;
     unsigned long ufirstOffset = 0x0;
 
-    tcp_hashinfo_addr = vmi_translate_ksym2v(vmi, "tcp_hashinfo");
-    udp_table_addr = vmi_translate_ksym2v(vmi, "udp_table");
+    vmi_translate_ksym2v(vmi, "tcp_hashinfo", &tcp_hashinfo_addr);
+    vmi_translate_ksym2v(vmi, "udp_table", &udp_table_addr);
 
     int i;
     printf("TCP ports: \n");
