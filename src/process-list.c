@@ -1,7 +1,6 @@
 #include "vmi.h"
 
 int introspect_process_list (char *name) {
-    vmi_instance_t vmi;
     addr_t list_head = 0, next_list_entry = 0, current_process = 0;
     vmi_pid_t pid = 0;
     char *procname = NULL;
