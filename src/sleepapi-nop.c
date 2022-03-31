@@ -32,7 +32,10 @@ int find_name(vmi_instance_t vmi, vmi_pid_t pid) {
     addr_t list_head = 0, next_list_entry = 0, current_process = 0;
     vmi_pid_t pid1 = 0;
 
-    list_head = vmi_translate_ksym2v(vmi, "init_task") + tasks_offset;
+    addr_t init_task_addr;
+    vmi_translate_ksym2v(vmi, "init_task", &init_task_addr);
+
+    list_head = init_task_addr + tasks_offset;
     next_list_entry = list_head;
 
     do {
@@ -105,8 +108,8 @@ event_response_t clock_nanosleep_enter_cb(vmi_instance_t vmi, vmi_event_t *event
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsp, RSP, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
-
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
         /**
          * the calling process has the given process name, so nop this sleep call.
          */
@@ -153,7 +156,8 @@ event_response_t nanosleep_enter_cb(vmi_instance_t vmi, vmi_event_t *event){
         vmi_get_vcpureg(vmi, &cr3, CR3, event->vcpu_id);
         vmi_get_vcpureg(vmi, &rsp, RSP, event->vcpu_id);
 
-        vmi_pid_t pid = vmi_dtb_to_pid(vmi, cr3);
+        vmi_pid_t pid = -1;
+        vmi_dtb_to_pid(vmi, cr3, &pid);
 
         if (find_name(vmi, pid)) {
             vmi_set_vcpureg(vmi, rsp+8, RSP, event->vcpu_id);
@@ -229,12 +233,34 @@ int introspect_sleepapi_nop (char *name) {
     sigaction(SIGALRM, &act, NULL);
 
     vmi_instance_t vmi = NULL;
-    if (vmi_init(&vmi, VMI_XEN | VMI_INIT_COMPLETE | VMI_INIT_EVENTS, name) == VMI_FAILURE){
+    vmi_init_data_t *init_data = NULL;
+    uint8_t init = VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, config_type = VMI_CONFIG_GLOBAL_FILE_ENTRY;
+    void *input = NULL, *config = NULL;
+    vmi_init_error_t *error = NULL;
+
+    vmi_mode_t mode;
+    if (VMI_FAILURE == vmi_get_access_mode(NULL, name, VMI_INIT_DOMAINNAME| VMI_INIT_EVENTS, init_data, &mode)) {
+        printf("Failed to find a supported hypervisor with LibVMI\n");
+        return 1;
+    }
+
+    /* initialize the libvmi library */
+    if (VMI_FAILURE == vmi_init(&vmi, mode, name, VMI_INIT_DOMAINNAME | VMI_INIT_EVENTS, init_data, NULL)) {
         printf("Failed to init LibVMI library.\n");
+        return 1;
+    }
+
+    if ( VMI_PM_UNKNOWN == vmi_init_paging(vmi, 0) ) {
+        printf("Failed to init determine paging.\n");
         vmi_destroy(vmi);
         return 1;
     }
 
+    if ( VMI_OS_UNKNOWN == vmi_init_os(vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, config, error) ) {
+        printf("Failed to init os.\n");
+        vmi_destroy(vmi);
+        return 1;
+    }
 
     /**
      * get the list of process names that to NOP their sleep API, from the file blacklist.txt.
@@ -257,17 +283,17 @@ int introspect_sleepapi_nop (char *name) {
     /**
      * get the task struct offsets from the libvmi confi file. 
      */
-    tasks_offset = vmi_get_offset(vmi, "linux_tasks");
-    name_offset = vmi_get_offset(vmi, "linux_name");
-    pid_offset = vmi_get_offset(vmi, "linux_pid");
+    vmi_get_offset(vmi, "linux_tasks", &tasks_offset);
+    vmi_get_offset(vmi, "linux_name", &name_offset);
+    vmi_get_offset(vmi, "linux_pid", &pid_offset);
 
     /**
      * get the address of two syscalls for sleep: sys_nanosleep and sys_clock_nanosleep
      */
-    virt_sys_nanosleep = vmi_translate_ksym2v(vmi, "sys_nanosleep");
-    phys_sys_nanosleep = vmi_translate_kv2p(vmi, virt_sys_nanosleep);
-    virt_sys_clock_nanosleep = vmi_translate_ksym2v(vmi, "sys_clock_nanosleep");
-    phys_sys_clock_nanosleep = vmi_translate_kv2p(vmi, virt_sys_clock_nanosleep);
+    vmi_translate_ksym2v(vmi, "sys_nanosleep", &virt_sys_nanosleep);
+    vmi_translate_kv2p(vmi, virt_sys_nanosleep, &phys_sys_nanosleep);
+    vmi_translate_ksym2v(vmi, "sys_clock_nanosleep", &virt_sys_clock_nanosleep);
+    vmi_translate_kv2p(vmi, virt_sys_clock_nanosleep, &phys_sys_clock_nanosleep);
 
     memset(&nanosleep_enter_event, 0, sizeof(vmi_event_t));
     memset(&clock_nanosleep_enter_event, 0, sizeof(vmi_event_t));
@@ -276,19 +302,12 @@ int introspect_sleepapi_nop (char *name) {
     /**
      * iniialize the memory event for EPT violation.
      */
-    nanosleep_enter_event.type = VMI_EVENT_MEMORY;
-    nanosleep_enter_event.mem_event.physical_address = phys_sys_nanosleep;
-    nanosleep_enter_event.mem_event.npages = 1;
-    nanosleep_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    nanosleep_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    nanosleep_enter_event.callback = nanosleep_enter_cb;
+    uint64_t gfn = phys_sys_nanosleep >> 12;
+    SETUP_MEM_EVENT(&nanosleep_enter_event, gfn, VMI_MEMACCESS_X, &nanosleep_enter_cb, false);
 
-    clock_nanosleep_enter_event.type = VMI_EVENT_MEMORY;
-    clock_nanosleep_enter_event.mem_event.physical_address = phys_sys_clock_nanosleep;
-    clock_nanosleep_enter_event.mem_event.npages = 1;
-    clock_nanosleep_enter_event.mem_event.granularity = VMI_MEMEVENT_PAGE;
-    clock_nanosleep_enter_event.mem_event.in_access = VMI_MEMACCESS_X;
-    clock_nanosleep_enter_event.callback = clock_nanosleep_enter_cb;
+    gfn = phys_sys_nanosleep >> 12;
+    SETUP_MEM_EVENT(&clock_nanosleep_enter_event, gfn, VMI_MEMACCESS_X, &clock_nanosleep_enter_cb, false);
+
 #else
     /**
      * iniialize the interrupt event for INT3.
